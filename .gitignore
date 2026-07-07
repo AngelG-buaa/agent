@@ -1,0 +1,55 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.whl
+.venv/
+venv/
+env/
+.venv
+
+# ===== Node / TypeScript =====
+node_modules/
+*.tsbuildinfo
+dist/
+build/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# ===== Environment =====
+.env
+.env.local
+.env.*.local
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+
+# ===== Logs =====
+*.log
+
+# ===== Claude Code (local overrides only) =====
+.claude/settings.local.json
+CLAUDE.md
+
+# ===== mine =====
+claude-code-analysis/
+Stage 1/Claude
+Stage 1/Open AI
+Stage 2/project/rag/data
+Stage 2/project/docs
+Stage 2/RAG
