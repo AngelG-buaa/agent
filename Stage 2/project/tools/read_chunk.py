@@ -1,6 +1,6 @@
 """按需读取 chunk 正文工具。"""
 
-from tool import Tool, ToolParameter
+from tooling.base import Tool, ToolParameter
 from rag.factory import get_retriever
 from rag.prompts import CITATION_GUIDELINES
 

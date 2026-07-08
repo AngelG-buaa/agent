@@ -53,3 +53,5 @@ Stage 1/Open AI
 Stage 2/project/rag/data
 Stage 2/project/docs
 Stage 2/RAG
+Stage 2/project/.superpowers
+.gitignore

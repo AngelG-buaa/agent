@@ -1,6 +1,6 @@
 """知识检索工具 —— 返回元数据（ID/标题/摘要），不含完整正文。"""
 
-from tool import Tool, ToolParameter
+from tooling.base import Tool, ToolParameter
 from rag.factory import get_retriever
 
 

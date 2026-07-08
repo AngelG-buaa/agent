@@ -1,6 +1,6 @@
 """工具注册表 —— 按名注册、导出 schema、分发执行。"""
 
-from tool import Tool
+from tooling.base import Tool
 
 
 class ToolRegistry:

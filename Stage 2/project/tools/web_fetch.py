@@ -2,7 +2,7 @@
 
 import requests
 
-from tool import Tool, ToolParameter
+from tooling.base import Tool, ToolParameter
 
 
 class WebFetchTool(Tool):

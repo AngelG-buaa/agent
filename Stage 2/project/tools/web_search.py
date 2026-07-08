@@ -1,15 +1,8 @@
 """联网搜索工具 —— 通过 DuckDuckGo 搜索互联网内容。"""
 
-from tool import Tool, ToolParameter
+from tooling.base import Tool, ToolParameter
 
-# ddgs 是可选依赖 —— 仅在调用搜索时需要。
-# 模块顶层使用 try/except 导入，使得本文件始终可被 import，
-# 只在缺少依赖且实际执行搜索时才抛出 ImportError。
-try:
-    from ddgs import DDGS
-    _DDGS_AVAILABLE = True
-except ImportError:
-    _DDGS_AVAILABLE = False
+from ddgs import DDGS
 
 
 class WebSearchTool(Tool):
@@ -30,10 +23,6 @@ class WebSearchTool(Tool):
         ]
 
     def run(self, params):
-        # if not _DDGS_AVAILABLE:
-        #     raise ImportError(
-        #         "使用联网搜索需要安装 ddgs: pip install ddgs"
-        #     )
         with DDGS() as ddgs:
             results = list(ddgs.text(params["query"], max_results=self._top_k))
         return {"results": results}

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from tool import Tool, ToolParameter
+from tooling.base import Tool, ToolParameter
 
 
 class GetTimeTool(Tool):

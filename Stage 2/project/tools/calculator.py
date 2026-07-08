@@ -1,6 +1,6 @@
 """计算器工具。"""
 
-from tool import Tool, ToolParameter
+from tooling.base import Tool, ToolParameter
 
 
 class CalculatorTool(Tool):

@@ -2,9 +2,9 @@
 
 import json
 
-from llm_client import LLMClient
-from tool_registry import ToolRegistry
-from message_utils import filter_assistant_message
+from agent.llm_client import LLMClient
+from tooling.registry import ToolRegistry
+from agent.message_utils import filter_assistant_message
 
 
 class Agent:
