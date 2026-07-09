@@ -3,17 +3,17 @@
 import json
 
 from agent.llm_client import LLMClient
-from tooling.registry import ToolRegistry
+from tooling.executor import ToolExecutor
 from agent.message_utils import filter_assistant_message
 
 
 class Agent:
     """最小 Agent：接收用户输入，循环调用 LLM + 工具，返回最终答案。"""
 
-    def __init__(self, llm: LLMClient, tool_registry: ToolRegistry,
+    def __init__(self, llm: LLMClient, executor: ToolExecutor,
                  system_prompt: str | None = None, max_steps: int = 10):
         self.llm = llm
-        self.tool_registry = tool_registry
+        self.executor = executor
         self.system_prompt = system_prompt
         self.max_steps = max_steps
 
@@ -24,7 +24,7 @@ class Agent:
         messages.append({"role": "user", "content": user_input})
 
         for _ in range(self.max_steps):
-            stop_reason, msg = self.llm.chat(messages, self.tool_registry.get_schemas())
+            stop_reason, msg = self.llm.chat(messages, self.executor.get_schemas())
 
             if stop_reason == "tool_calls":
                 # messages.append(filter_assistant_message(msg))
@@ -42,7 +42,7 @@ class Agent:
             args = json.loads(tc.function.arguments)
             print(f"  🔧 调用工具: {name}({args})")
 
-            result = self.tool_registry.execute(name, args)
+            result = self.executor.execute(name, args)
             print(f"  ✅ 结果: {result}")
 
             messages.append({

@@ -45,6 +45,7 @@ Desktop.ini
 # ===== Claude Code (local overrides only) =====
 .claude/settings.local.json
 CLAUDE.md
+AGENTS.md
 
 # ===== mine =====
 claude-code-analysis/

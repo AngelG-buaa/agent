@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from tooling.registry import ToolRegistry
+from tooling.executor import ToolExecutor
 from tools.calculator import CalculatorTool
 from tools.get_time import GetTimeTool
 from tools.read_chunk import ReadChunkTool
@@ -15,25 +15,25 @@ from tools.edit_file import EditFileTool
 
 
 def register_all(
-    registry: ToolRegistry,
+    executor: ToolExecutor,
     include_dangerous: bool = True,
     workdir: str | Path | None = None,
 ) -> None:
-    """将所有内置工具注册到 registry。
+    """将所有内置工具注册到 executor。
 
     Args:
-        registry: 目标 ToolRegistry
+        executor: 目标 ToolExecutor
         include_dangerous: 是否注册 destructive/sensitive 工具
         workdir: 工作区根目录（bash 的执行目录、文件工具的路径基准）
     """
-    registry.register(CalculatorTool())
-    registry.register(GetTimeTool())
-    registry.register(ReadChunkTool())
-    registry.register(SearchKnowledgeTool())
-    registry.register(WebFetchTool())
-    registry.register(WebSearchTool())
+    executor.register(CalculatorTool())
+    executor.register(GetTimeTool())
+    executor.register(ReadChunkTool())
+    executor.register(SearchKnowledgeTool())
+    executor.register(WebFetchTool())
+    executor.register(WebSearchTool())
 
     if include_dangerous:
-        registry.register(BashTool(workdir=workdir))
-        registry.register(WriteFileTool(base_dir=workdir))
-        registry.register(EditFileTool(base_dir=workdir))
+        executor.register(BashTool(workdir=workdir))
+        executor.register(WriteFileTool(base_dir=workdir))
+        executor.register(EditFileTool(base_dir=workdir))

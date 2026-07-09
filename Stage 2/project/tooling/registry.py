@@ -21,12 +21,3 @@ class ToolRegistry:
         """导出所有工具的 API schema。"""
         return [t.to_schema() for t in self._tools.values()]
 
-    def execute(self, name: str, args: dict) -> dict:
-        """按名分发执行；失败返回 {"error": ...}。"""
-        tool = self._tools.get(name)
-        if tool is None:
-            return {"error": f"未知工具: {name}"}
-        try:
-            return tool.run(args)
-        except Exception as exc:
-            return {"error": str(exc)}

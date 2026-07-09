@@ -2,15 +2,6 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-
-
-class RiskLevel(Enum):
-    """工具风险等级。元数据标记，不参与权限判断。"""
-    SAFE = "safe"
-    SENSITIVE = "sensitive"
-    DESTRUCTIVE = "destructive"
 
 
 @dataclass
@@ -49,40 +40,9 @@ class Tool(ABC):
                 return {"result": params["x"]}
     """
 
-    def __init__(self, name: str, description: str, risk_level: RiskLevel = RiskLevel.SAFE):
+    def __init__(self, name: str, description: str):
         self.name = name
         self.description = description
-        self.risk_level = risk_level  # 元数据标记，不参与权限判断
-
-    # ---- 权限管线方法 ----
-
-    def permission_target(self, params: dict) -> str:
-        """返回规则内容匹配的目标字符串。
-
-        默认返回空串（不参与内容匹配）。
-        bash 覆盖返回 command；文件工具覆盖返回 resolved path。
-        """
-        return ""
-
-    # ------------------------------------------------------------------------
-
-    @staticmethod
-    def resolve_path(path_str: str, base_dir: str | Path) -> Path:
-        """将相对路径解析为绝对路径。
-
-        纯路径工具方法，不做安全边界判断（安全边界由 PermissionEngine 负责）。
-        供 write_file / edit_file 等文件工具共用。
-
-        Args:
-            path_str: 相对路径
-            base_dir: 基准目录
-
-        Raises:
-            ValueError: 路径无法解析
-        """
-        return (Path(base_dir) / path_str).resolve()
-
-    # ---- 抽象方法 ----
 
     @abstractmethod
     def run(self, parameters: dict) -> dict:
