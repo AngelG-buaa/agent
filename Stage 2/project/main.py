@@ -35,7 +35,7 @@ if __name__ == "__main__":
     trigger_hooks("SessionStart")
 
     # 4. 运行
-    question = "新建一个文件，之后删除它"
+    question = "给我写一个台风巴威情况简报（尽量简单点），写到工作区里面"
     print(f"👤 用户: {question}\n")
     answer = agent.run(question)
     print(f"\n🤖 MyAgent: {answer}")

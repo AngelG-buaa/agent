@@ -30,7 +30,7 @@ class Agent:
 
         for _ in range(self.max_steps):
             stop_reason, msg = self.llm.chat(messages, self.executor.get_schemas())
-            # sleep(20)
+            sleep(10)
 
             if stop_reason == "tool_calls":
                 # messages.append(filter_assistant_message(msg))

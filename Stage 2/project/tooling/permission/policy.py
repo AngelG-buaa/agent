@@ -199,7 +199,7 @@ def build_rules(workspace_dir: Path) -> list[PermissionRule]:
     ))
 
     # 无副作用工具 — 全部放行
-    _SAFE_TOOLS = ["calculator", "get_time", "read_chunk", "search_knowledge", "web_search"]
+    _SAFE_TOOLS = ["calculator", "get_current_time", "read_chunk", "search_knowledge", "web_search"]
     for name in _SAFE_TOOLS:
         rules.append(PermissionRule(
             name, RuleBehavior.ALLOW, "*",

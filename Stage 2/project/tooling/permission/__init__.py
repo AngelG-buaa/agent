@@ -58,9 +58,10 @@ def create_permission_hook(
             decision = approver(tool_name, params, result.reason)
             if decision == "deny":
                 return {"error": f"用户拒绝了工具调用: {tool_name}"}
-            if decision == "session" and result.rule:
+            if decision == "session":
+                rule_content = result.rule.rule_content if result.rule else ""
                 engine.allow_for_session(
-                    tool_name, result.rule.rule_content, result.reason or "",
+                    tool_name, rule_content, result.reason or "",
                 )
 
         # allow / session 已处理 / fallback → 放行
