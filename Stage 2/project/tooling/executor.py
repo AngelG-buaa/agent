@@ -8,12 +8,12 @@
 
 工厂函数 build_tool_executor() 封装了 engine + executor 的组装细节。
 """
-
+from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
 from tooling.registry import ToolRegistry
-from tooling.permission import PermissionEngine, create_engine
+from tooling.permission import PermissionEngine, RuleBehavior, create_engine
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -62,18 +62,21 @@ class ToolExecutor:
 
         流程: 权限评估 → [审批] → 工具查找 → 执行
         """
-        behavior, reason = self._engine.evaluate(name, params)
+        result = self._engine.evaluate(name, params)
 
-        if behavior == "deny":
-            return {"error": f"权限不足: {reason or '操作被安全策略拒绝'}"}
+        if result.behavior == RuleBehavior.DENY:
+            return {"error": f"权限不足: {result.reason or '操作被安全策略拒绝'}"}
 
-        if behavior == "ask":
-            # TODO: 审批三态 (本次允许 / 始终允许 / 拒绝)
-            # 当前只支持 True/False
-            if not self._approver(name, params, reason):
+        if result.behavior == RuleBehavior.ASK:
+            decision = self._approver(name, params, result.reason)
+            if decision == "deny":
                 return {"error": f"用户拒绝了工具调用: {name}"}
+            if decision == "session" and result.rule:
+                self._engine.allow_for_session(
+                    name, result.rule.rule_content, result.reason or "",
+                )
 
-        # allow / default → 放行
+        # allow / session / default → 放行
         tool = self._registry.get_tool(name)
         if tool is None:
             return {"error": f"未知工具: {name}"}
@@ -87,41 +90,27 @@ class ToolExecutor:
 # 审批回调
 # ═══════════════════════════════════════════════════════════════
 
-# 审批回调签名: (tool_name, params, reason) -> approved
-# 返回 True 表示批准执行，False 表示拒绝。
-Approver = Callable[[str, dict, str | None], bool]
+# 审批回调: (tool_name, params, reason) -> "allow" | "deny" | "session"
+Approver = Callable[[str, dict, str | None], str]
 
 
-
-def terminal_approver(tool_name: str, params: dict, reason: str | None) -> bool:
+def terminal_approver(tool_name: str, params: dict, reason: str | None) -> str:
     """默认终端审批回调 —— 通过 input() 询问用户。
 
-    TODO: 审批三态 (本次允许 / 始终允许 / 拒绝)
-          当前只支持 True/False。后续扩展为三态时:
-            - 选"始终允许" → executor._engine.allow_for_session(tool_name, rule_content)
-            - Approver 签名需改为返回 ApprovalDecision 枚举
+    返回: "allow" | "deny" | "session"
+      - "session": 添加会话 ALLOW 规则，本次及后续同操作不再询问
     """
     print()
     print(f"  ⚠  权限确认: {reason or '需要用户审批'}")
-    # print(f"     工具: {tool_name}({_format_params(params)})")
     print(f"     工具: {tool_name}({params})")
     try:
-        choice = input("     允许执行？[y/N] ").strip().lower()
+        choice = input("     [y]允许 [n]拒绝 [a]始终允许? ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
-        return False
-    return choice in ("y", "yes")
-
-
-# def _format_params(params: dict) -> str:
-#     """格式化参数为简短展示字符串（>80 字符截断）。"""
-#     parts = []
-#     for k, v in params.items():
-#         s = str(v)
-#         if len(s) > 80:
-#             s = s[:77] + "..."
-#         parts.append(f"{k}={s!r}")
-#     return ", ".join(parts)
+        return "deny"
+    if choice in ("a", "always"):
+        return "session"
+    return "allow" if choice in ("y", "yes") else "deny"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -131,8 +120,8 @@ def terminal_approver(tool_name: str, params: dict, reason: str | None) -> bool:
 
 def build_tool_executor(
     project_root: str | Path | None = None,
-    default_behavior: str = "allow",
-    approver: Approver | None = None,
+    default_behavior: str = "ask",
+    approver: Approver = terminal_approver,
 ) -> ToolExecutor:
     """一键组装 ToolExecutor。
 

@@ -9,7 +9,7 @@
 
 from pathlib import Path
 
-from .engine import PermissionEngine
+from .engine import EvalResult, PermissionEngine
 from .policy import PermissionRule, RuleBehavior, build_rules
 
 

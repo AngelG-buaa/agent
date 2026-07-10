@@ -31,7 +31,7 @@ if __name__ == "__main__":
     agent = Agent(llm, executor, system_prompt=SYSTEM_PROMPT, max_steps=15)
 
     # 4. 运行
-    question = "看一下工作区里面的项目"
+    question = "新建一个文件，之后删除它"
     print(f"👤 用户: {question}\n")
     answer = agent.run(question)
     print(f"\n🤖 MyAgent: {answer}")

@@ -6,6 +6,7 @@ from tooling.executor import ToolExecutor
 from tools.calculator import CalculatorTool
 from tools.get_time import GetTimeTool
 from tools.read_chunk import ReadChunkTool
+from tools.read_file import ReadFileTool
 from tools.search_knowledge import SearchKnowledgeTool
 from tools.web_fetch import WebFetchTool
 from tools.web_search import WebSearchTool
@@ -29,6 +30,7 @@ def register_all(
     executor.register(CalculatorTool())
     executor.register(GetTimeTool())
     executor.register(ReadChunkTool())
+    executor.register(ReadFileTool(base_dir=workdir))
     executor.register(SearchKnowledgeTool())
     executor.register(WebFetchTool())
     executor.register(WebSearchTool())

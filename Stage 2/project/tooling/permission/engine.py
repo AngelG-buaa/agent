@@ -8,7 +8,17 @@ engine 只负责评估流程：
 engine 不包含任何具体的安全策略规则或条件匹配逻辑。
 """
 
+from dataclasses import dataclass
+
 from .policy import PermissionRule, RuleBehavior
+
+
+@dataclass
+class EvalResult:
+    """权限评估结果。"""
+    behavior: RuleBehavior
+    reason: str | None = None
+    rule: PermissionRule | None = None  # 命中的规则（session 预授权时需要）
 
 
 class PermissionEngine:
@@ -68,27 +78,27 @@ class PermissionEngine:
 
     # ---- 权限评估 ----
 
-    def evaluate(self, tool_name: str, params: dict) -> tuple[str, str | None]:
-        """评估工具调用权限。返回 (behavior, reason)。"""
+    def evaluate(self, tool_name: str, params: dict) -> EvalResult:
+        """评估工具调用权限。"""
         deny_pool, allow_pool, ask_pool = self._collect_all_rules()
 
         # Gate 1: deny
         for r in deny_pool:
             if r.matches(tool_name, params):
-                return ("deny", r.message)
+                return EvalResult(RuleBehavior.DENY, r.message, r)
 
         # Gate 2: allow (会话预授权)
         for r in allow_pool:
             if r.matches(tool_name, params):
-                return ("allow", None)
+                return EvalResult(RuleBehavior.ALLOW, rule=r)
 
         # Gate 3: ask → 审批
         for r in ask_pool:
             if r.matches(tool_name, params):
-                return ("ask", r.message)
+                return EvalResult(RuleBehavior.ASK, r.message, r)
 
         # Fallback
-        return (self.default_behavior, None)
+        return EvalResult(RuleBehavior(self.default_behavior))
 
     def _collect_all_rules(self) -> tuple[list[PermissionRule], list[PermissionRule], list[PermissionRule]]:
         """合并会话规则 + 缓存策略规则，去重后按类型分入三池。"""

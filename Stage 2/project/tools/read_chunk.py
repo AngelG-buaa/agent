@@ -9,7 +9,7 @@ class ReadChunkTool(Tool):
     def __init__(self):
         super().__init__(
             name="read_chunk",
-            description="读取指定 chunk ID 的完整正文。可一次读取多个",
+            description="读取指定 chunk ID 的完整正文。不能用来读文件",
         )
 
     def get_parameters(self):

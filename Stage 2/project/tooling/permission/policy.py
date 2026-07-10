@@ -81,6 +81,14 @@ def _path_contains_any(segments: list[str]) -> Callable[[str, dict], bool]:
     return condition
 
 
+def _cmd_starts_with_any(prefixes: list[str]) -> Callable[[str, dict], bool]:
+    """命令以任一前缀开头即匹配。'ls' 匹配 'ls' 和 'ls -la'，'git status' 匹配 'git status --short'。"""
+    def condition(_tool_name: str, params: dict) -> bool:
+        command = params.get("command", "").strip().lower()
+        return any(command == pfx or command.startswith(pfx + " ") for pfx in prefixes)
+    return condition
+
+
 def _path_outside_dir(base_dir: Path) -> Callable[[str, dict], bool]:
     def condition(_tool_name: str, params: dict) -> bool:
         path_str = params.get("path", "")
@@ -134,6 +142,69 @@ def build_rules(workspace_dir: Path) -> list[PermissionRule]:
             tool, RuleBehavior.DENY, "~/.ssh/* | .ssh/*",
             "禁止篡改 SSH 密钥", _path_contains_any(["~/.ssh/", ".ssh/"]),
             rule_id=f"policy-deny-ssh-{tool}",
+        ))
+
+    # ── Allow: 无害只读命令 ──
+
+    _SAFE_COMMANDS = [
+        "ls", "dir", "cat", "type", "find", "locate", "grep", "egrep", "fgrep", "findstr",
+        "head", "tail", "wc", "sort", "uniq", "cut", "tr", "diff", "cmp", "file", "stat",
+        "du", "df", "echo", "printf", "pwd", "whoami", "hostname", "uname", "uptime",
+        "ps", "env", "printenv", "id", "groups", "which", "where", "whereis", "tree",
+        "xxd", "od", "hexdump", "nl", "tac", "rev", "comm", "join", "paste", "column",
+        "expand", "fold", "fmt", "date", "man", "info", "help", "locale", "declare",
+        "alias", "shopt", "true", "false", "test",
+    ]
+    _GIT_READONLY = [
+        "git status", "git log", "git diff", "git show", "git branch", "git tag",
+        "git remote", "git stash list", "git reflog", "git ls-files", "git blame",
+        "git grep", "git rev-parse", "git rev-list", "git describe", "git shortlog",
+        "git cherry", "git for-each-ref", "git stash show", "git config --list",
+        "git config --get",
+    ]
+    _DOCKER_READONLY = [
+        "docker ps", "docker images", "docker inspect", "docker logs", "docker stats",
+        "docker version", "docker info", "docker compose ps", "docker compose logs",
+        "docker compose config",
+    ]
+    _PKG_READONLY = [
+        "pip list", "pip show", "pip freeze", "npm list", "npm view", "conda list",
+    ]
+
+    allow_specs = [
+        ("通用只读命令",   _SAFE_COMMANDS,    "policy-allow-safe-cmds"),
+        ("Git 只读",       _GIT_READONLY,     "policy-allow-git-ro"),
+        ("Docker 只读",    _DOCKER_READONLY,  "policy-allow-docker-ro"),
+        ("包管理只读",     _PKG_READONLY,     "policy-allow-pkg-ro"),
+    ]
+    for label, prefixes, rid in allow_specs:
+        rules.append(PermissionRule(
+            "bash", RuleBehavior.ALLOW, label,
+            f"自动放行: {label}", _cmd_starts_with_any(prefixes),
+            rule_id=rid,
+        ))
+
+    # * --version
+    rules.append(PermissionRule(
+        "bash", RuleBehavior.ALLOW, "* --version",
+        "自动放行: 版本查看", _cmd_contains(" --version"),
+        rule_id="policy-allow-version",
+    ))
+
+    # 只读工具 — 全部放行
+    rules.append(PermissionRule(
+        "read_file", RuleBehavior.ALLOW, "*",
+        "自动放行: 文件读取", lambda _t, _p: True,
+        rule_id="policy-allow-read-file",
+    ))
+
+    # 无副作用工具 — 全部放行
+    _SAFE_TOOLS = ["calculator", "get_time", "read_chunk", "search_knowledge", "web_search"]
+    for name in _SAFE_TOOLS:
+        rules.append(PermissionRule(
+            name, RuleBehavior.ALLOW, "*",
+            f"自动放行: {name}", lambda _t, _p: True,
+            rule_id=f"policy-allow-{name}",
         ))
 
     # ── Ask: 文件工具工作区边界 ──

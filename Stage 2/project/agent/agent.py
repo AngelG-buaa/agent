@@ -1,6 +1,7 @@
 """Agent 核心循环 —— Think → Act → Observe。"""
 
 import json
+from time import sleep
 
 from agent.llm_client import LLMClient
 from tooling.executor import ToolExecutor
@@ -25,6 +26,7 @@ class Agent:
 
         for _ in range(self.max_steps):
             stop_reason, msg = self.llm.chat(messages, self.executor.get_schemas())
+            sleep(20)
 
             if stop_reason == "tool_calls":
                 # messages.append(filter_assistant_message(msg))

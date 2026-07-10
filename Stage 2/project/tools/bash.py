@@ -40,16 +40,23 @@ class BashTool(Tool):
         command = parameters["command"]
         timeout = parameters.get("timeout", 120)
 
-        result = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(self._workdir),
-            timeout=timeout,
-            capture_output=True,
-            text=True,
-        )
-        return {
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode,
-        }
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=str(self._workdir),
+                timeout=timeout,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",    # 无法解码的字节用 � 替代，不崩
+            )
+            return {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+            }
+        except subprocess.TimeoutExpired:
+            return {"error": f"命令超时 ({timeout}s): {command}"}
+        except Exception as exc:
+            return {"error": f"命令执行失败: {exc}"}
