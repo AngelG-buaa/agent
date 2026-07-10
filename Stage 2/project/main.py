@@ -17,18 +17,22 @@ from agent.agent import Agent
 from config import llm as llm_cfg, WORKDIR
 from agent.prompts import SYSTEM_PROMPT
 from tools import register_all
+from hooks import trigger_hooks
 
 
 if __name__ == "__main__":
     # 1. 创建 LLM 客户端
     llm = LLMClient(llm_cfg.api_key, llm_cfg.base_url, llm_cfg.model)
 
-    # 2. 创建工具执行器（内部持有 ToolRegistry + PermissionEngine）
+    # 2. 创建工具执行器（内部: ToolRegistry + PreToolUse permission_hook）
     executor = build_tool_executor(project_root=WORKDIR)
     register_all(executor, include_dangerous=True, workdir=WORKDIR)
 
     # 3. 创建 Agent
     agent = Agent(llm, executor, system_prompt=SYSTEM_PROMPT, max_steps=15)
+
+    # Hook: 会话启动（memory 初始化、session 记录等）
+    trigger_hooks("SessionStart")
 
     # 4. 运行
     question = "新建一个文件，之后删除它"

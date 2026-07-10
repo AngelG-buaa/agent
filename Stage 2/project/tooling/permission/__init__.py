@@ -1,13 +1,16 @@
 """权限审批模块 —— 3 步管线 + 内置安全策略。
 
 公共 API:
-  - PermissionEngine  — 权限评估引擎（含会话规则 allow_for_session / revoke_session_rule）
-  - create_engine      — 工厂函数（自动组装内置策略）
-  - PermissionRule     — 规则数据模型
-  - RuleBehavior       — 规则行为枚举
+  - PermissionEngine       — 权限评估引擎（含会话规则 allow_for_session / revoke_session_rule）
+  - create_engine          — 工厂函数（自动组装内置策略）
+  - create_permission_hook — 工厂函数（创建 PreToolUse hook 回调）
+  - PermissionRule         — 规则数据模型
+  - RuleBehavior           — 规则行为枚举
 """
 
+from __future__ import annotations
 from pathlib import Path
+from typing import Callable
 
 from .engine import EvalResult, PermissionEngine
 from .policy import PermissionRule, RuleBehavior, build_rules
@@ -28,3 +31,39 @@ def create_engine(
         policy_rules=build_rules(root),
         default_behavior=default_behavior,
     )
+
+
+def create_permission_hook(
+    engine: PermissionEngine,
+    approver,
+) -> Callable[..., dict | None]:
+    """创建 PreToolUse hook 回调，封装权限检查 + 审批逻辑。
+
+    Args:
+        engine: 权限评估引擎
+        approver: 审批回调 (tool_name, params, reason) -> "allow" | "deny" | "session"
+
+    Returns:
+        hook 回调: (tool_name, params) -> dict | None
+          - 返回 dict（error）阻断工具执行
+          - 返回 None 放行
+    """
+    def permission_hook(tool_name: str, params: dict) -> dict | None:
+        result = engine.evaluate(tool_name, params)
+
+        if result.behavior == RuleBehavior.DENY:
+            return {"error": f"权限不足: {result.reason or '操作被安全策略拒绝'}"}
+
+        if result.behavior == RuleBehavior.ASK:
+            decision = approver(tool_name, params, result.reason)
+            if decision == "deny":
+                return {"error": f"用户拒绝了工具调用: {tool_name}"}
+            if decision == "session" and result.rule:
+                engine.allow_for_session(
+                    tool_name, result.rule.rule_content, result.reason or "",
+                )
+
+        # allow / session 已处理 / fallback → 放行
+        return None
+
+    return permission_hook

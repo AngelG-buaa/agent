@@ -6,6 +6,7 @@ from time import sleep
 from agent.llm_client import LLMClient
 from tooling.executor import ToolExecutor
 from agent.message_utils import filter_assistant_message
+from hooks import trigger_hooks
 
 
 class Agent:
@@ -24,17 +25,22 @@ class Agent:
         messages.append({"role": "system", "content": self.system_prompt})
         messages.append({"role": "user", "content": user_input})
 
+        # Hook: 用户输入提交（日志、上下文注入等）
+        trigger_hooks("UserPromptSubmit", user_input)
+
         for _ in range(self.max_steps):
             stop_reason, msg = self.llm.chat(messages, self.executor.get_schemas())
-            sleep(20)
+            # sleep(20)
 
             if stop_reason == "tool_calls":
                 # messages.append(filter_assistant_message(msg))
                 messages.append(msg)
                 self._execute_tool_calls(msg.tool_calls, messages)
             else:
+                trigger_hooks("PreAgentStop", messages)
                 return msg.content or "（模型未返回文本）"
 
+        trigger_hooks("PreAgentStop", messages)
         return "Agent 已停止：达到最大步数限制。"
 
     def _execute_tool_calls(self, tool_calls, messages: list) -> None:

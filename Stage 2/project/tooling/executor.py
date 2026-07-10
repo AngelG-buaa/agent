@@ -2,18 +2,19 @@
 
 职责:
   - 工具注册/管理   —— 内部持有 ToolRegistry
-  - 权限评估        —— 集成 PermissionEngine（3 步管线）
+  - Hook 触发       —— PreToolUse / PostToolUse（权限检查是 PreToolUse 的一个注册回调）
   - 审批交互        —— 通过 Approver 回调注入，默认终端 input()
   - 对外接口        —— register() / get_schemas() / execute()
 
-工厂函数 build_tool_executor() 封装了 engine + executor 的组装细节。
+工厂函数 build_tool_executor() 封装了 engine + hook 注册 + executor 的组装细节。
 """
 from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
 from tooling.registry import ToolRegistry
-from tooling.permission import PermissionEngine, RuleBehavior, create_engine
+from tooling.permission import create_engine, create_permission_hook
+from hooks import register_hook, trigger_hooks
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -22,28 +23,19 @@ from tooling.permission import PermissionEngine, RuleBehavior, create_engine
 
 
 class ToolExecutor:
-    """工具执行器 —— 权限检查 + 工具分发。
+    """工具执行器 —— Hook 触发 + 工具分发。
+
+    不直接持有 PermissionEngine。权限检查通过 PreToolUse hook 回调实现。
+    build_tool_executor() 工厂负责在构造后将权限 hook 注册到 PreToolUse。
 
     用法:
-        engine = create_engine(project_root)
-        executor = ToolExecutor(engine)
+        executor = build_tool_executor(project_root=WORKDIR)
         executor.register(BashTool(...))
         agent = Agent(llm, executor, ...)
     """
 
-    def __init__(
-        self,
-        engine: PermissionEngine,
-        approver: Approver,
-    ):
-        # ── 工具注册层 ──
+    def __init__(self):
         self._registry = ToolRegistry()
-
-        # ── 权限评估层 ──
-        self._engine = engine
-
-        # ── 审批交互层 ──
-        self._approver = approver
 
     # ---- 工具注册 ----
 
@@ -58,32 +50,31 @@ class ToolExecutor:
         return self._registry.get_schemas()
 
     def execute(self, name: str, params: dict) -> dict:
-        """执行工具（带权限检查）。
+        """执行工具（通过 hooks 链）。
 
-        流程: 权限评估 → [审批] → 工具查找 → 执行
+        流程: PreToolUse hooks → 工具查找 → 执行 → PostToolUse hooks
+        PreToolUse 中任一 hook 返回非 None 的 dict → 阻断执行，返回该 dict 作为错误。
         """
-        result = self._engine.evaluate(name, params)
+        # Gate: PreToolUse hooks（权限检查、日志、MCP 拦截等）
+        block = trigger_hooks("PreToolUse", name, params)
+        if block is not None:
+            return block
 
-        if result.behavior == RuleBehavior.DENY:
-            return {"error": f"权限不足: {result.reason or '操作被安全策略拒绝'}"}
-
-        if result.behavior == RuleBehavior.ASK:
-            decision = self._approver(name, params, result.reason)
-            if decision == "deny":
-                return {"error": f"用户拒绝了工具调用: {name}"}
-            if decision == "session" and result.rule:
-                self._engine.allow_for_session(
-                    name, result.rule.rule_content, result.reason or "",
-                )
-
-        # allow / session / default → 放行
+        # 工具查找
         tool = self._registry.get_tool(name)
         if tool is None:
             return {"error": f"未知工具: {name}"}
+
+        # 执行
         try:
-            return tool.run(params)
+            result = tool.run(params)
         except Exception as exc:
-            return {"error": str(exc)}
+            result = {"error": str(exc)}
+
+        # Gate: PostToolUse hooks（日志、副作用、session 记录等）
+        trigger_hooks("PostToolUse", name, params, result)
+
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -125,7 +116,7 @@ def build_tool_executor(
 ) -> ToolExecutor:
     """一键组装 ToolExecutor。
 
-    封装了 PermissionEngine 创建、PolicySettingsSource 组装等内部细节。
+    内部: 创建 PermissionEngine → 包装为 PreToolUse hook → 注册 → 返回简化 executor。
 
     Args:
         project_root: 项目根目录（安全边界 + 策略配置目录），None 则使用 cwd
@@ -136,4 +127,8 @@ def build_tool_executor(
         project_root=project_root,
         default_behavior=default_behavior,
     )
-    return ToolExecutor(engine, approver=approver)
+    # 将权限检查注册为 PreToolUse 的第一个回调
+    permission_hook = create_permission_hook(engine, approver)
+    register_hook("PreToolUse", permission_hook)
+
+    return ToolExecutor()
