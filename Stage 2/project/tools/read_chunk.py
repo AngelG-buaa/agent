@@ -14,8 +14,9 @@ class ReadChunkTool(Tool):
 
     def get_parameters(self):
         return [
-            ToolParameter("chunk_ids", "array",
-                          "要读取的 chunk ID 列表，如 [0, 3, 7]。每个 ID 必须是整数。",
+            ToolParameter(name="chunk_ids",
+                          type="array",
+                          description="要读取的 chunk ID 列表，如 [0, 3, 7]。每个 ID 必须是整数。",
                           required=True),
         ]
 

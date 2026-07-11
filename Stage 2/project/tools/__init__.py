@@ -13,6 +13,7 @@ from tools.web_search import WebSearchTool
 from tools.bash import BashTool
 from tools.write_file import WriteFileTool
 from tools.edit_file import EditFileTool
+from tools.todo_write import TodoWriteTool
 
 
 def register_all(
@@ -27,6 +28,7 @@ def register_all(
         include_dangerous: 是否注册 destructive/sensitive 工具
         workdir: 工作区根目录（bash 的执行目录、文件工具的路径基准）
     """
+    executor.register(TodoWriteTool())
     executor.register(CalculatorTool())
     executor.register(GetTimeTool())
     executor.register(ReadChunkTool())

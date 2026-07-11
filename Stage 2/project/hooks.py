@@ -6,8 +6,10 @@
 事件一览:
   - SessionStart            Agent 初始化完成
   - UserPromptSubmit        用户输入后、LLM 调用前
+  - PreLLMCall              每轮 LLM 调用前（可注入消息到对话中）
   - PreToolUse              工具执行前
   - PostToolUse             工具执行后
+  - PostRound               每轮结束后（含 stop_reason 和 tool_calls 信息）
   - PreAgentStop            Agent 准备返回结果前
 """
 
@@ -20,8 +22,10 @@ HookCallback = Callable[..., dict | None]
 HOOKS: dict[str, list[HookCallback]] = {
     "SessionStart": [],
     "UserPromptSubmit": [],
+    "PreLLMCall": [],
     "PreToolUse": [],
     "PostToolUse": [],
+    "PostRound": [],
     "PreAgentStop": [],
 }
 

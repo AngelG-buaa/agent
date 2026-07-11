@@ -20,7 +20,7 @@ class Agent:
         self.max_steps = max_steps
 
     def run(self, user_input: str) -> str:
-        """核心循环：tool_calls → 执行工具 → 回传；stop → 返回答案。"""
+        """核心循环：Think → Act → Observe，通过 hooks 扩展行为。"""
         messages: list[dict] = []
         messages.append({"role": "system", "content": self.system_prompt})
         messages.append({"role": "user", "content": user_input})
@@ -29,14 +29,24 @@ class Agent:
         trigger_hooks("UserPromptSubmit", user_input)
 
         for _ in range(self.max_steps):
+            # Hook: 每轮 LLM 调用前，允许 hooks 注入额外消息（todo 提醒）
+            inject = trigger_hooks("PreLLMCall")
+            if inject:
+                messages.extend(inject["messages"])
+
             stop_reason, msg = self.llm.chat(messages, self.executor.get_schemas())
-            sleep(10)
+            sleep(30)
 
             if stop_reason == "tool_calls":
                 # messages.append(filter_assistant_message(msg))
                 messages.append(msg)
                 self._execute_tool_calls(msg.tool_calls, messages)
-            else:
+
+            # Hook: 每轮结束后通知 hooks（更新todo记录）
+            tool_calls = msg.tool_calls if stop_reason == "tool_calls" else None
+            trigger_hooks("PostRound", stop_reason, tool_calls)
+
+            if stop_reason != "tool_calls":
                 trigger_hooks("PreAgentStop", messages)
                 return msg.content or "（模型未返回文本）"
 
@@ -51,7 +61,7 @@ class Agent:
             print(f"  🔧 调用工具: {name}({args})")
 
             result = self.executor.execute(name, args)
-            print(f"  ✅ 结果: {result}")
+            # print(f"  ✅ 结果: {result}")
 
             messages.append({
                 "role": "tool",

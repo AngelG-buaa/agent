@@ -17,6 +17,7 @@ from agent.agent import Agent
 from config import llm as llm_cfg, WORKDIR
 from agent.prompts import SYSTEM_PROMPT
 from tools import register_all
+from tools.todo_write import register_todo_hooks
 from hooks import trigger_hooks
 
 
@@ -28,14 +29,17 @@ if __name__ == "__main__":
     executor = build_tool_executor(project_root=WORKDIR)
     register_all(executor, include_dangerous=True, workdir=WORKDIR)
 
+    # 装配 todo_write 提醒 hooks（PreLLMCall + PostRound）
+    register_todo_hooks()
+
     # 3. 创建 Agent
-    agent = Agent(llm, executor, system_prompt=SYSTEM_PROMPT, max_steps=15)
+    agent = Agent(llm, executor, system_prompt=SYSTEM_PROMPT, max_steps=50)
 
     # Hook: 会话启动（memory 初始化、session 记录等）
     trigger_hooks("SessionStart")
 
     # 4. 运行
-    question = "给我写一个台风巴威情况简报（尽量简单点），写到工作区里面"
+    question = "检查工作区的agent项目中，todo相关的功能实现是否有问题（关注一下todo工具的permission相关设计是否正确），审查报告写到docs里面"
     print(f"👤 用户: {question}\n")
     answer = agent.run(question)
     print(f"\n🤖 MyAgent: {answer}")
