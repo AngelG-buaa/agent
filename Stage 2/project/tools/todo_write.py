@@ -1,7 +1,5 @@
 """TodoWrite 工具 —— 让 Agent 在执行复杂任务前规划步骤、执行中跟踪进度。
 
-设计参考: Claude Code TodoWrite V1 + learn-claude-code s05 教程。
-
 职责:
   - 维护全局任务列表（进程内存，不持久化）
   - 校验输入合法性（status 枚举、content 非空）
@@ -40,11 +38,7 @@ class TodoWriteTool(Tool):
         super().__init__(
             name="todo_write",
             description=(
-                "Use this tool to create and manage a structured task list "
-                "for your current coding session. This helps you track progress, "
-                "organize complex tasks, and demonstrate thoroughness. "
-                "This tool does not perform any actual work — it only manages "
-                "the task list."
+            "为当前编码会话创建和管理结构化任务列表，帮助跟踪进度、组织复杂任务。此工具仅维护列表，不执行实际操作。"
             ),
         )
 

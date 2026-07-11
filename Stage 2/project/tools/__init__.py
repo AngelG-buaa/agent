@@ -14,12 +14,14 @@ from tools.bash import BashTool
 from tools.write_file import WriteFileTool
 from tools.edit_file import EditFileTool
 from tools.todo_write import TodoWriteTool
+from tools.task import TaskTool
 
 
 def register_all(
     executor: ToolExecutor,
     include_dangerous: bool = True,
     workdir: str | Path | None = None,
+    llm=None,
 ) -> None:
     """将所有内置工具注册到 executor。
 
@@ -27,8 +29,10 @@ def register_all(
         executor: 目标 ToolExecutor
         include_dangerous: 是否注册 destructive/sensitive 工具
         workdir: 工作区根目录（bash 的执行目录、文件工具的路径基准）
+        llm: LLMClient 实例（TaskTool 需要，可选）
     """
     executor.register(TodoWriteTool())
+    executor.register(TaskTool(llm=llm, executor=executor))
     executor.register(CalculatorTool())
     executor.register(GetTimeTool())
     executor.register(ReadChunkTool())

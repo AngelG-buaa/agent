@@ -2,19 +2,15 @@
   ============================================================================
   Sync Impact Report
   ============================================================================
-  Version change: 0.0.0 → 1.0.0 (initial constitution)
-  Modified principles: N/A (first version)
+  Version change: 1.0.0 → 1.1.0 (added Principle IX)
+  Modified principles: N/A
   Added sections:
-    - Core Principles (8 principles)
-    - Code Quality Standards
-    - Technical Constraints
-    - Delivery & Workflow
-    - Governance
+    - Core Principles → IX. Keep the Agent Loop Simple
   Removed sections: N/A
   Templates requiring updates:
-    - .specify/templates/plan-template.md       ✅ aligned (Constitution Check gate exists)
+    - .specify/templates/plan-template.md       ✅ aligned (Constitution Check gate exists; new gate can be added)
     - .specify/templates/spec-template.md       ✅ aligned (no conflicts)
-    - .specify/templates/tasks-template.md      ✅ updated (test requirement aligned with Principle VII)
+    - .specify/templates/tasks-template.md      ✅ aligned (no conflicts)
     - .specify/templates/checklist-template.md  ✅ aligned (no conflicts)
   Follow-up TODOs: None
   ============================================================================
@@ -91,6 +87,15 @@
 - 重构时先理解现有的功能边界，不跨边界改写
 - 如果确实需要 breaking change，必须在 spec 阶段提出并与 reviewer 讨论
 
+### IX. Keep the Agent Loop Simple
+
+Agent 核心循环（`Agent.run()`）是项目的心脏。尽量不动它，保持它的简洁性。
+
+- Agent 循环的职责只有一件事：**Think → Act → Observe**。不在此循环中塞入业务逻辑
+- 新能力的接入点优先考虑：(1) 工具层（新增 Tool）、(2) Hook 层（注册回调）、(3) 构造函数参数（配置注入）
+- 如果某个需求需要修改 `run()` 的循环逻辑本身，先问自己：能不能用 hook 或参数化解决？
+- `run()` 的代码行数不应随功能迭代线性增长——新增功能不应等比增加循环体内代码
+
 ## Code Quality Standards
 
 ### Error Handling
@@ -164,4 +169,4 @@
 - **版本策略**：MAJOR.MINOR.PATCH（语义化版本），参考 sync impact report
 - **合规审查**：每次 spec + plan 阶段通过 Constitution Check gate
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-11 | **Last Amended**: 2026-07-11
+**Version**: 1.1.0 | **Ratified**: 2026-07-11 | **Last Amended**: 2026-07-11

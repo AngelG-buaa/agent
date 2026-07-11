@@ -27,7 +27,7 @@ if __name__ == "__main__":
 
     # 2. 创建工具执行器（内部: ToolRegistry + PreToolUse permission_hook）
     executor = build_tool_executor(project_root=WORKDIR)
-    register_all(executor, include_dangerous=True, workdir=WORKDIR)
+    register_all(executor, include_dangerous=True, workdir=WORKDIR, llm=llm)
 
     # 装配 todo_write 提醒 hooks（PreLLMCall + PostRound）
     register_todo_hooks()
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     trigger_hooks("SessionStart")
 
     # 4. 运行
-    question = "检查工作区的agent项目中，todo相关的功能实现是否有问题（关注一下todo工具的permission相关设计是否正确），审查报告写到docs里面"
+    question = "检查工作区的agent项目中，RAG相关的功能实现是否应该引入LlamaIndex（关注一下D:/LLM/Agent/Stage 2/project/rag 目录），审查报告写到docs里面"
     print(f"👤 用户: {question}\n")
     answer = agent.run(question)
     print(f"\n🤖 MyAgent: {answer}")
