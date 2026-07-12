@@ -15,6 +15,7 @@ from tools.write_file import WriteFileTool
 from tools.edit_file import EditFileTool
 from tools.todo_write import TodoWriteTool
 from tools.task import TaskTool
+from tools.ask_user import AskUserTool
 
 
 def register_all(
@@ -33,6 +34,7 @@ def register_all(
     """
     executor.register(TodoWriteTool())
     executor.register(TaskTool(llm=llm, executor=executor))
+    executor.register(AskUserTool())
     executor.register(CalculatorTool())
     executor.register(GetTimeTool())
     executor.register(ReadChunkTool())

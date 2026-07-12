@@ -122,7 +122,7 @@ def _create_todo_reminder_hooks():
             tc.function.name == "todo_write" for tc in tool_calls
         ):
             rounds_since_todo = 0
-        else:
+        elif CURRENT_TODOS:
             rounds_since_todo += 1
         return None  # 纯副作用，不阻断
 

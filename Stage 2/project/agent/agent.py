@@ -25,15 +25,12 @@ class Agent:
         self.tool_filter = tool_filter
         self.print_handler = print_handler or default_print_handler
 
-    def run(self, user_input: str) -> str:
-        """核心循环：Think → Act → Observe，通过 hooks 扩展行为。"""
-        messages: list[dict] = []
-        messages.append({"role": "system", "content": self.system_prompt})
-        messages.append({"role": "user", "content": user_input})
+    def run(self, messages: list[dict]) -> str:
+        """核心循环：Think → Act → Observe，通过 hooks 扩展行为。
 
-        # Hook: 用户输入提交（日志、上下文注入等）
-        trigger_hooks("UserPromptSubmit", user_input)
-
+        messages 必须已包含 system prompt（如需要）和最新的 user 消息。
+        循环体会原地修改 messages（追加 assistant 和 tool 消息）。
+        """
         for _ in range(self.max_steps):
             # Hook: 每轮 LLM 调用前，允许 hooks 注入额外消息（todo 提醒）
             inject = trigger_hooks("PreLLMCall")

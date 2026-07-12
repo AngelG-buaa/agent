@@ -77,7 +77,11 @@ def spawn_subagent(description: str, llm, executor) -> str:
     print(f"\n[Subagent spawned] {description[:100]}")
 
     sub = SubAgent(llm=llm, executor=executor)
-    result = sub.run(description)
+    messages = [
+        {"role": "system", "content": sub.system_prompt},
+        {"role": "user", "content": description},
+    ]
+    result = sub.run(messages)
 
     print(f"[Subagent done]")
     return result
