@@ -58,3 +58,83 @@ def filter_assistant_message(msg) -> dict:
             for tc in msg.tool_calls
         ]
     return d
+
+
+# ═══════════════════════════════════════════════════════════
+# 通用消息访问器 —— 兼容 dict 和 OpenAI SDK ChatCompletionMessage
+# ═══════════════════════════════════════════════════════════
+
+
+def get_role(msg) -> str:
+    """提取消息 role —— dict 用 ["role"]，SDK 对象用 .role。"""
+    if isinstance(msg, dict):
+        return msg.get("role", "")
+    return getattr(msg, "role", "")
+
+
+def get_content(msg) -> str:
+    """提取消息 content —— dict 用 ["content"]，SDK 对象用 .content。"""
+    if isinstance(msg, dict):
+        return msg.get("content", "") or ""
+    val = getattr(msg, "content", None)
+    return val or ""
+
+
+def get_tool_calls(msg) -> list[dict]:
+    """提取 tool_calls，统一返回 list[dict]（含 "id" 键）。
+
+    dict 格式: [{id, type, function: {name, arguments}}, ...]
+    SDK 对象: ChatCompletionMessageFunctionToolCall → 转为同结构 dict。
+    """
+    if isinstance(msg, dict):
+        return msg.get("tool_calls", []) or []
+    tcs = getattr(msg, "tool_calls", None) or []
+    result: list[dict] = []
+    for tc in tcs:
+        if isinstance(tc, dict):
+            result.append(tc)
+        else:
+            result.append({
+                "id": tc.id,
+                "type": getattr(tc, "type", "function"),
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            })
+    return result
+
+
+def get_tool_call_id(msg) -> str | None:
+    """提取 tool_call_id —— dict 用 ["tool_call_id"]，SDK 对象用 .tool_call_id。"""
+    if isinstance(msg, dict):
+        return msg.get("tool_call_id")
+    return getattr(msg, "tool_call_id", None)
+
+
+def set_content(msg, content: str) -> None:
+    """设置消息 content —— dict 用 ["content"]，SDK 对象用 .content。"""
+    if isinstance(msg, dict):
+        msg["content"] = content
+    elif hasattr(msg, "content"):
+        msg.content = content
+    else:
+        # 明确告知调用方这里出了问题，而不是偷偷忽略
+        raise TypeError(f"Unsupported msg type: {type(msg)}")
+
+
+def to_serializable(msg) -> dict:
+    """将消息转为可 JSON 序列化的纯 dict（用于存档、LLM 调用）。"""
+    if isinstance(msg, dict):
+        return msg
+    d: dict = {"role": get_role(msg)}
+    content = get_content(msg)
+    if content:
+        d["content"] = content
+    tcs = get_tool_calls(msg)
+    if tcs:
+        d["tool_calls"] = tcs
+    tc_id = get_tool_call_id(msg)
+    if tc_id:
+        d["tool_call_id"] = tc_id
+    return d

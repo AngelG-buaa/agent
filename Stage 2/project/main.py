@@ -39,7 +39,7 @@ if __name__ == "__main__":
     trigger_hooks("SessionStart")
 
     # 4. 运行
-    question = "检查工作区的agent项目中，RAG相关的功能实现是否应该引入LlamaIndex（关注一下D:/LLM/Agent/Stage 2/project/rag 目录），审查报告写到docs里面（推荐用subAgent功能进行阅读调研）"
+    question = "给我详细调研西兰花怎么做好吃"
     print(f"👤 用户: {question}\n")
     answer = agent.run(question)
     print(f"\n🤖 MyAgent: {answer}")

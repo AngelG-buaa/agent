@@ -7,6 +7,7 @@ from typing import Callable
 from agent.llm_client import LLMClient
 from tooling.executor import ToolExecutor
 from agent.utils import default_print_handler
+from agent.compact import compact_pipeline
 from hooks import trigger_hooks
 
 
@@ -38,6 +39,9 @@ class Agent:
             inject = trigger_hooks("PreLLMCall")
             if inject:
                 messages.extend(inject["messages"])
+
+            # Compact: 四层渐进式上下文压缩（L3→L1→L2→L4）
+            compact_pipeline(messages, self.llm)
 
             schemas = self.executor.get_schemas()
             if self.tool_filter:

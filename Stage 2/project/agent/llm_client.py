@@ -10,16 +10,15 @@ class LLMClient:
         self.model = model
         self._client = OpenAI(api_key=api_key, base_url=base_url)
 
-    def chat(self, messages: list, tools: list) -> tuple[str, object]:
-        """发送请求，返回 (finish_reason, message)。"""
+    def chat(self, messages: list, tools: list, max_tokens: int | None = None) -> tuple[str, object]:
+        """发送请求，返回 (finish_reason, message)。max_tokens 可选，默认不限制。"""
         # 打印实际发送的 HTTP body（JSON 格式）
         # body = {"model": self.model, "messages": messages, "tools": tools}
         # print("\n===== 发给 LLM 的 JSON body =====")
-        # print(f"{json.dumps(body, ensure_ascii=False, indent=2, default=lambda o: o.model_dump() if hasattr(o, 'model_dump') else str(o))}")
+        # print(f"{json.dumps(body, ensure_ascii=False, indent=2, default=lambda o: o.model_dump() if hasattr(o, 'model_dump') else str(o))")
         # print("===== end =====\n")
-        r = self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-        )
+        kwargs = {"model": self.model, "messages": messages, "tools": tools}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        r = self._client.chat.completions.create(**kwargs)
         return r.choices[0].finish_reason, r.choices[0].message
