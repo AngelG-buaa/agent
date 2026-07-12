@@ -41,7 +41,7 @@ def create_permission_hook(
 
     Args:
         engine: 权限评估引擎
-        approver: 审批回调 (tool_name, params, reason) -> "allow" | "deny" | "session"
+        approver: 审批回调 (tool_name, params, reason) -> {"decision": "allow"|"deny"|"session", "reason"?: str}
 
     Returns:
         hook 回调: (tool_name, params) -> dict | None
@@ -56,9 +56,13 @@ def create_permission_hook(
 
         if result.behavior == RuleBehavior.ASK:
             decision = approver(tool_name, params, result.reason)
-            if decision == "deny":
+            choice = decision.get("decision", "deny")
+            if choice == "deny":
+                deny_reason = decision.get("reason", "")
+                if deny_reason:
+                    return {"error": f"用户拒绝了工具调用: {tool_name}。原因: {deny_reason}"}
                 return {"error": f"用户拒绝了工具调用: {tool_name}"}
-            if decision == "session":
+            if choice == "session":
                 rule_content = result.rule.rule_content if result.rule else ""
                 engine.allow_for_session(
                     tool_name, rule_content, result.reason or "",

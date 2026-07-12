@@ -81,15 +81,16 @@ class ToolExecutor:
 # 审批回调
 # ═══════════════════════════════════════════════════════════════
 
-# 审批回调: (tool_name, params, reason) -> "allow" | "deny" | "session"
-Approver = Callable[[str, dict, str | None], str]
+# 审批回调: (tool_name, params, reason) -> {"decision": "allow"|"deny"|"session", "reason"?: str}
+Approver = Callable[[str, dict, str | None], dict]
 
 
-def terminal_approver(tool_name: str, params: dict, reason: str | None) -> str:
+def terminal_approver(tool_name: str, params: dict, reason: str | None) -> dict:
     """默认终端审批回调 —— 通过 input() 询问用户。
 
-    返回: "allow" | "deny" | "session"
+    返回: {"decision": "allow"|"deny"|"session", "reason"?: str}
       - "session": 添加会话 ALLOW 规则，本次及后续同操作不再询问
+      - "deny" 时可附带拒绝原因（用户可选输入）
     """
     print()
     print(f"  ⚠  权限确认: {reason or '需要用户审批'}")
@@ -98,10 +99,18 @@ def terminal_approver(tool_name: str, params: dict, reason: str | None) -> str:
         choice = input("     [y]允许 [n]拒绝 [a]始终允许? ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
-        return "deny"
+        return {"decision": "deny"}
     if choice in ("a", "always"):
-        return "session"
-    return "allow" if choice in ("y", "yes") else "deny"
+        return {"decision": "session"}
+    if choice in ("y", "yes"):
+        return {"decision": "allow"}
+
+    # 拒绝时可输入原因
+    deny_reason = input("     输入拒绝原因（可选，回车跳过）: ").strip()
+    result: dict = {"decision": "deny"}
+    if deny_reason:
+        result["reason"] = deny_reason
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
