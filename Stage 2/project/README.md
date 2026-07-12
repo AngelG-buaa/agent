@@ -10,6 +10,7 @@
 |------|------|------|
 | 001 | [specs/001-todo-write-tool/](specs/001-todo-write-tool/) | 加入 TodoWrite 工具——Agent 在执行复杂任务前规划步骤、跟踪进度 |
 | 002 | [specs/002-task-subagent-tool/](specs/002-task-subagent-tool/) | 加入 Task 工具 + SubAgent 子类——上下文隔离、子任务委派 |
+| 003 | [specs/003-context-compact/](specs/003-context-compact/) | Context Compact——四层渐进式压缩管线，防止长对话上下文溢出 |
 
 每个迭代遵循 [Spec Kit](.specify/) 流程：Specify → Clarify → Plan → Tasks → Implement → Analyze。
 
@@ -22,11 +23,12 @@ Stage 2/project/
 ├── hooks.py                 # Hook 事件系统（register_hook / trigger_hooks）
 ├── README.md                # ← 你正在看的这个文件
 │
-├── agent/                   # Agent 层：核心循环 + 提示词 + 工具函数
+├── agent/                   # Agent 层：核心循环 + 提示词 + 工具函数 + 压缩管线
 │   ├── agent.py             # Agent 类 (Think→Act→Observe) + SubAgent(Agent) 子类
+│   ├── compact.py           # 四层上下文压缩管线 (L3→L1→L2→L4)
 │   ├── llm_client.py        # LLMClient：OpenAI 兼容 API 封装
 │   ├── prompts.py           # SYSTEM_PROMPT + SUB_SYSTEM_PROMPT
-│   └── utils.py             # 打印回调 + filter_assistant_message
+│   └── utils.py             # 打印回调 + filter_assistant_message + 消息访问器
 │
 ├── tools/                   # 工具层：12 个内置工具
 │   ├── __init__.py          # register_all() — 统一注册入口
@@ -65,6 +67,7 @@ Stage 2/project/
 │   └── prompts.py           # 引用格式规则
 │
 ├── tests/                   # 测试
+│   ├── test_compact.py      # 上下文压缩管线（28 tests）
 │   ├── test_todo_write.py   # TodoWrite 相关（34 tests）
 │   └── test_task.py         # SubAgent + Task + Agent 扩展（37 tests）
 │
@@ -75,10 +78,11 @@ Stage 2/project/
 │
 ├── specs/                   # 功能规范（Spec Kit 产物）
 │   ├── 001-todo-write-tool/
-│   └── 002-task-subagent-tool/
+│   ├── 002-task-subagent-tool/
+│   └── 003-context-compact/
 │
 └── .specify/                # Spec Kit 配置
-    ├── memory/constitution.md  # 项目宪章（9 条原则）
+    ├── memory/constitution.md  # 项目宪章
     ├── templates/              # spec/plan/tasks 模板
     └── feature.json            # 当前活跃 feature 指针
 ```
@@ -93,17 +97,20 @@ for _ in range(self.max_steps):
     # ① PreLLMCall hook（可注入消息）
     inject = trigger_hooks("PreLLMCall")
 
-    # ② Think: LLM 调用
+    # ② Compact: 四层渐进式上下文压缩
+    compact_pipeline(messages, self.llm)
+
+    # ③ Think: LLM 调用
     stop_reason, msg = self.llm.chat(messages, schemas)
 
-    # ③ Act: 执行工具调用
+    # ④ Act: 执行工具调用
     if stop_reason == "tool_calls":
         self._execute_tool_calls(msg.tool_calls, messages)
 
-    # ④ PostRound hook（副作用跟踪）
+    # ⑤ PostRound hook（副作用跟踪）
     trigger_hooks("PostRound", stop_reason, tool_calls)
 
-    # ⑤ Observe: 判断终止
+    # ⑥ Observe: 判断终止
     if stop_reason != "tool_calls":
         return msg.content
 ```
@@ -137,6 +144,23 @@ for _ in range(self.max_steps):
 | `PreAgentStop` | Agent.run() 退出 | Agent 停止前 |
 
 **注意**：`PreLLMCall` 是控制型 hook（返回值改变循环行为），其余为通知型。参见 [TECH_DEBT #1](docs/TECH_DEBT.md)。
+
+### Context Compact（上下文压缩）
+
+`agent/compact.py`。每轮 LLM 调用前自动运行四层渐进式压缩，防止长对话上下文溢出。原则：便宜的先跑，贵的后跑。
+
+| 层 | 函数 | 触发条件 | API 调用 | 做了什么 |
+|----|------|---------|----------|---------|
+| L3 | `tool_result_budget()` | 最近一轮 tool 消息总量 >500KB | 0 | 超大结果写入 `.task_outputs/tool-results/`，消息中只留 2000 字符预览 |
+| L1 | `snip_compact()` | 消息数 >100 | 0 | 保留头 3 + 尾 97，中间替换为 `[snipped N]` 占位符。边界保护 tool_calls/tool 配对 |
+| L2 | `micro_compact()` | tool 消息数 >5 | 0 | 最新 5 个完整保留，其余 >120 字符的替换为占位符 |
+| L4 | `compact_history()` | 前三层后仍 >200K 字符 | 1 | 调 LLM 生成摘要，全量替换历史 + 恢复 Todo 列表。失败重试 2 次后降级 |
+
+阈值可通过 `config.py` 中的 `CompactionConfig` 统一调整。
+
+### 消息访问器
+
+`agent/utils.py` 中新增 6 个归一化函数 — `get_role()`、`get_content()`、`get_tool_calls()`、`get_tool_call_id()`、`set_content()`、`to_serializable()`。兼容 `messages` 列表中的 `dict` 和 OpenAI SDK `ChatCompletionMessage` 对象，避免 `msg["role"]` 在 SDK 对象上报错。
 
 ### 权限系统
 
@@ -180,6 +204,7 @@ D:/Miniconda/envs/llm/python -m pytest tests/ -q
 | [docs/TECH_DEBT.md](docs/TECH_DEBT.md) | 技术债追踪（触发条件 + 方案） |
 | [specs/001-todo-write-tool/](specs/001-todo-write-tool/) | 迭代 1：TodoWrite |
 | [specs/002-task-subagent-tool/](specs/002-task-subagent-tool/) | 迭代 2：SubAgent |
+| [specs/003-context-compact/](specs/003-context-compact/) | 迭代 3：Context Compact |
 
 ## 技术栈
 
