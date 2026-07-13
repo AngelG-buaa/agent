@@ -3,8 +3,23 @@
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 WORKDIR = _PROJECT_ROOT  # 工具执行的安全边界，文件写操作不得超出此目录
+
+# 从项目根目录的 .env 加载环境变量（.env 已被 .gitignore 忽略，密钥不入库）
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+
+
+def _require_env(name: str) -> str:
+    """读取必需的环境变量，缺失时给出明确报错。"""
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(
+            f"环境变量 {name} 未设置。请复制 .env.example 为 .env 并填入真实密钥。"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -33,19 +48,14 @@ class RAGConfig:
 
 
 llm = LLMConfig(
-    api_key="sk-ws-H.EDHDHRY.e8yo.MEQCIC_5ccW-LOTKuGDJ530Cf_YOzuB8k-1mDciA7wplXG-FAiAk9gWaaJwYahRLo5XjP5TqV_NKaWCE0fIaXzFRZosnOg",
+    api_key=_require_env("DASHSCOPE_API_KEY"),
     base_url="https://ws-3nvfaye9ft7tkruh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
     model="qwen3.6-flash",
 )
 
-# llm = LLMConfig(
-#     api_key="sk-4b05e846d5974843bc68c93a9f9baef3",
-#     base_url="https://api.deepseek.com",
-#     model="deepseek-v4-pro",
-# )
 
 embedding_model = EmbeddingConfig(
-    api_key="sk-ws-H.EDHDHRY.e8yo.MEQCIC_5ccW-LOTKuGDJ530Cf_YOzuB8k-1mDciA7wplXG-FAiAk9gWaaJwYahRLo5XjP5TqV_NKaWCE0fIaXzFRZosnOg",
+    api_key=_require_env("DASHSCOPE_API_KEY"),
     base_url="https://ws-3nvfaye9ft7tkruh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
     model="text-embedding-v4",
 )
