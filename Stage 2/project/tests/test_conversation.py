@@ -192,66 +192,58 @@ class TestApiError:
 # ═══════════════════════════════════════════════════════════════
 
 
-class TestPermissionCrossTurn:
-    """权限会话规则跨轮保持 (T014)。"""
+class TestPermissionGrantFlow:
+    """验证 grant 创建和替换的端到端流程（新 API）。"""
 
-    def test_session_rule_persists_across_turns(self):
-        """'始终允许'的权限规则应在后续轮次生效。"""
-        from tooling.permission.engine import PermissionEngine
-        from tooling.permission.policy import RuleBehavior
+    def test_grant_created_via_allow_for_session(self):
+        """通过 allow_for_session 创建 grant → evaluate 返回 ALLOW。"""
+        from tooling.permission.engine import PermissionEngine, EvalResult
+        from tooling.permission.policy import PermissionRule, RuleBehavior
 
-        engine = PermissionEngine(default_behavior="ask")
-
-        # 模拟用户在第 1 轮选择"始终允许"
-        engine.allow_for_session(
-            "bash",
-            "git status",
-            "会话预授权: bash git status",
+        ask_rule = PermissionRule(
+            tool_name="bash", rule_behavior=RuleBehavior.ASK,
+            rule_content="git status", message="确认 git 操作",
+            condition=lambda t, p: "git status" in p.get("command", ""),
+            rule_id="policy-ask-git",
         )
+        engine = PermissionEngine(policy_rules=[ask_rule], default_behavior="deny")
 
-        # 第 2 轮：同类操作应自动放行
-        result = engine.evaluate("bash", {"command": "git status"})
-        assert result.behavior == RuleBehavior.ALLOW
+        # 模拟用户选择 "session"
+        eval_result = engine.evaluate("bash", {"command": "git status"})
+        assert eval_result.behavior == RuleBehavior.ASK
+        engine.allow_for_session(eval_result)
 
-    def test_session_rule_scoped_to_tool_and_content(self):
-        """会话规则仅对匹配的工具和内容生效。"""
+        # 后续同操作自动放行
+        r2 = engine.evaluate("bash", {"command": "git status"})
+        assert r2.behavior == RuleBehavior.ALLOW
+
+    def test_grant_scoped_to_tool_and_content(self):
+        """grant 仅对匹配的工具和内容生效。"""
         from tooling.permission.engine import PermissionEngine
-        from tooling.permission.policy import RuleBehavior
+        from tooling.permission.policy import PermissionRule, RuleBehavior
 
-        engine = PermissionEngine(default_behavior="ask")
-        engine.allow_for_session("bash", "git status", "预授权")
+        ask_rule = PermissionRule(
+            tool_name="bash", rule_behavior=RuleBehavior.ASK,
+            rule_content="git status", message="确认 git 操作",
+            condition=lambda t, p: "git status" in p.get("command", ""),
+            rule_id="policy-ask-git",
+        )
+        engine = PermissionEngine(policy_rules=[ask_rule], default_behavior="deny")
 
-        # 匹配的工具 + 内容 → 放行
+        eval_result = engine.evaluate("bash", {"command": "git status"})
+        engine.allow_for_session(eval_result)
+
+        # 匹配 → 放行
         r1 = engine.evaluate("bash", {"command": "git status"})
         assert r1.behavior == RuleBehavior.ALLOW
 
-        # 不匹配的工具 → 仍走 fallback
+        # 不同工具 → fallback
         r2 = engine.evaluate("write_file", {"file_path": "test.py"})
-        assert r2.behavior == RuleBehavior.ASK  # fallback
+        assert r2.behavior == RuleBehavior.DENY
 
-    def test_revoke_session_rule(self):
-        """撤销会话规则后恢复默认行为。"""
-        from tooling.permission.engine import PermissionEngine
-        from tooling.permission.policy import RuleBehavior
-
-        engine = PermissionEngine(default_behavior="ask")
-        rid = engine.allow_for_session("bash", "git status", "预授权")
-
-        engine.revoke_session_rule(rid)
-        result = engine.evaluate("bash", {"command": "git status"})
-        assert result.behavior == RuleBehavior.ASK  # fallback
-
-    def test_clear_all_session_rules(self):
-        """清空会话规则后全部恢复默认。"""
-        from tooling.permission.engine import PermissionEngine
-        from tooling.permission.policy import RuleBehavior
-
-        engine = PermissionEngine(default_behavior="ask")
-        engine.allow_for_session("bash", "git status", "")
-        engine.allow_for_session("read_file", "*", "")
-
-        engine.clear_session_rules()
-        assert engine.evaluate("bash", {"command": "git status"}).behavior == RuleBehavior.ASK
+        # 同工具不同命令 → fallback
+        r3 = engine.evaluate("bash", {"command": "rm file.txt"})
+        assert r3.behavior == RuleBehavior.DENY
 
 
 class TestTodoWriteCrossTurn:
@@ -320,8 +312,10 @@ class TestConversationIntegration:
 
         from tooling.registry import ToolRegistry
         from tooling.executor import ToolExecutor
+        from tooling.permission import PermissionEngine
 
-        executor = ToolExecutor()
+        engine = PermissionEngine(default_behavior="allow")
+        executor = ToolExecutor(permission_engine=engine, approver=lambda n,p,r: {"decision": "allow"})
         # bypass ToolRegistry for test
         executor._registry = ToolRegistry()
 

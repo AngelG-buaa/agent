@@ -48,10 +48,11 @@ Stage 2/project/
 ├── tooling/                 # 工具基础设施层
 │   ├── base.py              # Tool 抽象基类 + ToolParameter 数据类
 │   ├── registry.py          # ToolRegistry：按名注册/查找/导出 schema
-│   ├── executor.py          # ToolExecutor：执行网关 (PreToolUse→执行→PostToolUse)
-│   └── permission/          # 权限子系统
-│       ├── engine.py        # PermissionEngine：规则匹配 + 会话级 ALLOW/DENY
-│       └── policy.py        # RuleSource → PolicySettingsSource → 策略加载
+│   ├── executor.py          # ToolExecutor：实例级权限检查 + 工具分发 (engine/approver 构造注入)
+│   └── permission/          # 权限子系统（实例级注入，非全局 Hook）
+│       ├── engine.py        # PermissionEngine + PermissionGrant：评估管线 + grant/listener 接口
+│       ├── policy.py        # RuleSource → 内置安全策略（19 条规则）
+│       └── exceptions.py    # PermissionArchitectureError → 权限异常类型
 │
 ├── rag/                     # RAG 子系统（离线 ingest + 在线检索）
 │   ├── factory.py           # 单例工厂
@@ -127,7 +128,7 @@ for _ in range(self.max_steps):
 | `run(params) → dict` | 执行工具，返回结果 |
 | `to_schema()` | 导出 OpenAI function calling 格式 |
 
-`ToolExecutor` 是 Agent 与工具之间的唯一网关。每次执行：`PreToolUse hooks（权限检查）→ 工具查找 → 执行 → PostToolUse hooks`。
+`ToolExecutor` 是 Agent 与工具之间的唯一网关。构造时注入 `PermissionEngine` + `Approver`，权限检查在实例内部完成（不经过全局 Hook）。执行管线：工具查找 → 实例级权限检查 → 全局 PreToolUse hooks（日志/观测） → 工具执行 → PostToolUse hooks。
 
 ### Hook 系统
 
@@ -138,12 +139,12 @@ for _ in range(self.max_steps):
 | `SessionStart` | main.py | 会话初始化 |
 | `UserPromptSubmit` | Agent.run() | 用户输入后 |
 | `PreLLMCall` | Agent.run() 每轮 | 消息注入（todo 提醒） |
-| `PreToolUse` | executor.execute() | **权限检查**（可阻断） |
+| `PreToolUse` | executor.execute() | 工具执行前通知（日志/观测，非权限） |
 | `PostToolUse` | executor.execute() | 工具执行后 |
 | `PostRound` | Agent.run() 每轮 | 轮数跟踪 |
 | `PreAgentStop` | Agent.run() 退出 | Agent 停止前 |
 
-**注意**：`PreLLMCall` 是控制型 hook（返回值改变循环行为），其余为通知型。参见 [TECH_DEBT #1](docs/TECH_DEBT.md)。
+**注意**：`PreLLMCall` 是控制型 hook（返回值改变循环行为），其余为通知型。权限检查不再走全局 Hook——已改为 ToolExecutor 实例内部通过构造注入的 PermissionEngine 完成。参见 [TECH_DEBT #1](docs/TECH_DEBT.md)。
 
 ### Context Compact（上下文压缩）
 
@@ -164,7 +165,7 @@ for _ in range(self.max_steps):
 
 ### 权限系统
 
-`tooling/permission/engine.py`。加载项目级策略文件，在 `PreToolUse` hook 中检查每个工具调用。支持三种决策：`allow` / `deny` / `session`（本次会话记住选择）。SubAgent 与主 Agent 共享同一 executor → 同一 permission engine → 同一 session 规则。
+`tooling/permission/engine.py`。**实例级注入，非全局 Hook**。每个 `ToolExecutor` 构造时接收独立的 `PermissionEngine` + `Approver`，权限检查在 executor 内部完成。支持三种决策：`allow` / `deny` / `session`（本次会话记住选择）。提供公开的 grant/listener 接口（`PermissionGrant`、`set_grant_listener()`、`replace_session_rules()`）供 SessionController 持久化授权。SubAgent 与主 Agent 共享同一 executor → 共享同一 engine → 同一 session 规则。
 
 ### SubAgent
 

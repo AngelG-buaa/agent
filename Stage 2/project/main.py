@@ -12,7 +12,8 @@ Agent + RAG —— 工具选择 → 权限检查 → 工具执行 → 返回带�
 """
 
 from agent.llm_client import LLMClient
-from tooling.executor import build_tool_executor
+from tooling.permission import create_engine
+from tooling.executor import ToolExecutor, terminal_approver
 from agent.agent import Agent
 from agent.conversation import Conversation
 from config import llm as llm_cfg, WORKDIR
@@ -25,8 +26,9 @@ if __name__ == "__main__":
     # 1. 创建 LLM 客户端
     llm = LLMClient(llm_cfg.api_key, llm_cfg.base_url, llm_cfg.model)
 
-    # 2. 创建工具执行器（内部: ToolRegistry + PreToolUse permission_hook）
-    executor = build_tool_executor(project_root=WORKDIR)
+    # 2. 创建权限引擎 + 工具执行器（显式组装，engine 可共享给 SessionController）
+    engine = create_engine(project_root=WORKDIR, default_behavior="ask")
+    executor = ToolExecutor(permission_engine=engine, approver=terminal_approver)
     register_all(executor, include_dangerous=True, workdir=WORKDIR, llm=llm)
 
     # 装配 todo_write 提醒 hooks（PreLLMCall + PostRound）

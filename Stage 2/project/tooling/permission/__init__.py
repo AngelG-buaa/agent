@@ -1,18 +1,28 @@
-"""权限审批模块 —— 3 步管线 + 内置安全策略。
+"""权限审批模块 —— 实例级权限评估 + 内置安全策略。
 
 公共 API:
-  - PermissionEngine       — 权限评估引擎（含会话规则 allow_for_session / revoke_session_rule）
+  - PermissionEngine       — 权限评估引擎
+  - PermissionGrant        — 可持久化的用户授权数据契约
   - create_engine          — 工厂函数（自动组装内置策略）
-  - create_permission_hook — 工厂函数（创建 PreToolUse hook 回调）
   - PermissionRule         — 规则数据模型
   - RuleBehavior           — 规则行为枚举
+  - EvalResult             — 权限评估结果
+  - PermissionArchitectureError — 权限异常基类
+  - NonPersistablePermission    — fallback ASK 不可持久化
+  - InvalidPermissionGrant      — grant 无效
+  - InvalidPermissionRule       — 规则配置无效
 """
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Callable
 
-from .engine import EvalResult, PermissionEngine
+from .engine import EvalResult, PermissionEngine, PermissionGrant
+from .exceptions import (
+    PermissionArchitectureError,
+    NonPersistablePermission,
+    InvalidPermissionGrant,
+    InvalidPermissionRule,
+)
 from .policy import PermissionRule, RuleBehavior, build_rules
 
 
@@ -31,44 +41,3 @@ def create_engine(
         policy_rules=build_rules(root),
         default_behavior=default_behavior,
     )
-
-
-def create_permission_hook(
-    engine: PermissionEngine,
-    approver,
-) -> Callable[..., dict | None]:
-    """创建 PreToolUse hook 回调，封装权限检查 + 审批逻辑。
-
-    Args:
-        engine: 权限评估引擎
-        approver: 审批回调 (tool_name, params, reason) -> {"decision": "allow"|"deny"|"session", "reason"?: str}
-
-    Returns:
-        hook 回调: (tool_name, params) -> dict | None
-          - 返回 dict（error）阻断工具执行
-          - 返回 None 放行
-    """
-    def permission_hook(tool_name: str, params: dict) -> dict | None:
-        result = engine.evaluate(tool_name, params)
-
-        if result.behavior == RuleBehavior.DENY:
-            return {"error": f"权限不足: {result.reason or '操作被安全策略拒绝'}"}
-
-        if result.behavior == RuleBehavior.ASK:
-            decision = approver(tool_name, params, result.reason)
-            choice = decision.get("decision", "deny")
-            if choice == "deny":
-                deny_reason = decision.get("reason", "")
-                if deny_reason:
-                    return {"error": f"用户拒绝了工具调用: {tool_name}。原因: {deny_reason}"}
-                return {"error": f"用户拒绝了工具调用: {tool_name}"}
-            if choice == "session":
-                rule_content = result.rule.rule_content if result.rule else ""
-                engine.allow_for_session(
-                    tool_name, rule_content, result.reason or "",
-                )
-
-        # allow / session 已处理 / fallback → 放行
-        return None
-
-    return permission_hook

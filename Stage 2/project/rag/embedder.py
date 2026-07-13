@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 class Embedder:
-    """BGE-M3 Embedding 服务，封装批量调用。"""
+    """Embedding 服务，封装批量调用。"""
 
-    def __init__(self, api_key: str, base_url: str, model: str = "bge-m3"):
+    def __init__(self, api_key: str, base_url: str, model: str):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model

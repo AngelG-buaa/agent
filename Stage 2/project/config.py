@@ -33,9 +33,9 @@ class RAGConfig:
 
 
 llm = LLMConfig(
-    api_key="2sbqJpYViTl8cuoEiO-8N8Ydn228GHvA_E0ZZ-qql4gTrz7lXwYlM4rUOX9i9Z3YbO5CB4ajmvgMYD27Ti9U_w",
-    base_url="https://api.modelarts-maas.com/openai/v1",
-    model="deepseek-v4-pro",
+    api_key="sk-ws-H.EDHDHRY.e8yo.MEQCIC_5ccW-LOTKuGDJ530Cf_YOzuB8k-1mDciA7wplXG-FAiAk9gWaaJwYahRLo5XjP5TqV_NKaWCE0fIaXzFRZosnOg",
+    base_url="https://ws-3nvfaye9ft7tkruh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    model="qwen3.6-flash",
 )
 
 # llm = LLMConfig(
@@ -45,9 +45,9 @@ llm = LLMConfig(
 # )
 
 embedding_model = EmbeddingConfig(
-    api_key="2sbqJpYViTl8cuoEiO-8N8Ydn228GHvA_E0ZZ-qql4gTrz7lXwYlM4rUOX9i9Z3YbO5CB4ajmvgMYD27Ti9U_w",
-    base_url="https://api.modelarts-maas.com/v1",
-    model="bge-m3",
+    api_key="sk-ws-H.EDHDHRY.e8yo.MEQCIC_5ccW-LOTKuGDJ530Cf_YOzuB8k-1mDciA7wplXG-FAiAk9gWaaJwYahRLo5XjP5TqV_NKaWCE0fIaXzFRZosnOg",
+    base_url="https://ws-3nvfaye9ft7tkruh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    model="text-embedding-v4",
 )
 
 rag = RAGConfig(
