@@ -1,150 +1,58 @@
-"""SessionManager 单元测试 —— 用 tempfile (非 :memory:) 验证文件级行为。
-
-:memory: 模式不适用于 SessionManager（需要独立 .db 文件 + os.remove + glob）。
-使用 tempfile.TemporaryDirectory 隔离每个 test。
-"""
+"""SessionManager Repository 核心测试 —— 三个案例保护架构不变量。"""
 
 import os
+import contextlib
 import sqlite3
 import tempfile
+import uuid
+from unittest.mock import patch
 
 import pytest
 
-from agent.session_manager import SessionManager, SessionSummary
+from agent.session_manager import (
+    SessionManager,
+    SessionCorrupted,
+    SessionError,
+)
 
 
 @pytest.fixture
-def sm():
-    """创建临时 sessions 目录的 SessionManager 实例。"""
+def mgr():
+    """每个测试独享 tmp sessions_dir。"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        mgr = SessionManager(sessions_dir=tmpdir)
-        yield mgr
-        mgr.close()  # 关闭所有连接，避免 teardown PermissionError
+        m = SessionManager(sessions_dir=tmpdir)
+        yield m
 
 
-class TestCreateSession:
-    """T003-T006: session CRUD"""
-
-    def test_create_returns_uuid(self, sm):
-        session_id = sm.create_session()
-        assert len(session_id) == 36  # UUID4
-        assert os.path.exists(os.path.join(sm.sessions_dir, f"{session_id}.db"))
-
-    def test_create_initializes_schema(self, sm):
-        session_id = sm.create_session()
-        db_path = os.path.join(sm.sessions_dir, f"{session_id}.db")
-        conn = sqlite3.connect(db_path)
-        tables = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-        conn.close()
-        table_names = {r[0] for r in tables}
-        assert "sessions" in table_names
-        assert "messages" in table_names
-        assert "permissions" in table_names
-        assert "todos" in table_names
-
-    def test_create_inserts_session_row_with_untitled(self, sm):
-        session_id = sm.create_session()
-        with sm.get_connection(session_id) as conn:
-            row = conn.execute("SELECT title, message_count FROM sessions WHERE id=?", (session_id,)).fetchone()
-        assert row[0] == "Untitled"
-        assert row[1] == 0
+# ------------------------------------------------------------------
+# T021: 核心往返 —— create + append + load, 角色顺序
+# ------------------------------------------------------------------
 
 
-class TestListSessions:
-    def test_list_returns_empty_initially(self, sm):
-        assert sm.list_sessions() == []
+class TestRepositoryRoundtrip:
+    """create → append → load 往返，验证角色顺序。"""
 
-    def test_list_returns_all_sorted_by_mtime(self, sm):
-        import time
-        sid1 = sm.create_session()
-        time.sleep(0.1)
-        sid2 = sm.create_session()
-        time.sleep(0.1)
-        sid3 = sm.create_session()
-        sessions = sm.list_sessions()
-        assert len(sessions) == 3
-        # 按 mtime 降序: sid3 first
-        assert sessions[0].id == sid3
-        assert sessions[2].id == sid1
+    def test_create_append_load_role_order(self, mgr):
+        """system → user → assistant 顺序完整保留。"""
+        sid = mgr.create_session({"role": "system", "content": "You are helpful."})
 
-    def test_list_skips_corrupted_file(self, sm):
-        # 创建一个非 db 的垃圾文件
-        bad_path = os.path.join(sm.sessions_dir, "bad.db")
-        with open(bad_path, "w") as f:
-            f.write("not a database")
-        sm.create_session()
-        sessions = sm.list_sessions()
-        assert all(s.id != "bad" for s in sessions)
+        mgr.append_message(sid, {"role": "user", "content": "hello"})
+        mgr.append_message(sid, {"role": "assistant", "content": "Hi there!"})
 
+        snap = mgr.load_session(sid)
+        assert snap.message_count == 3
+        assert snap.title != "Untitled"
 
-class TestDeleteSession:
-    def test_delete_removes_file(self, sm):
-        sid = sm.create_session()
-        sm.delete_session(sid)
-        assert not os.path.exists(os.path.join(sm.sessions_dir, f"{sid}.db"))
+        roles = [m["role"] for m in snap.messages]
+        assert roles == ["system", "user", "assistant"]
+        assert snap.messages[1]["content"] == "hello"
 
-    def test_delete_closes_connection(self, sm):
-        sid = sm.create_session()
-        sm.delete_session(sid)
-        assert sid not in sm._connections
+    def test_tool_roundtrip(self, mgr):
+        """工具调用轮: assistant(tool_calls) → tool → assistant(final)。"""
+        sid = mgr.create_session({"role": "system", "content": "You are helpful."})
 
-
-class TestRenameSession:
-    def test_rename_updates_title(self, sm):
-        sid = sm.create_session()
-        sm.rename_session(sid, "New Title")
-        sessions = sm.list_sessions()
-        assert sessions[0].title == "New Title"
-
-
-class TestSaveMessage:
-    def test_save_persists_all_fields(self, sm):
-        sid = sm.create_session()
-        user_msg = {"role": "user", "content": "Hello, world!"}
-        sm.save_message(sid, user_msg)
-
-        with sm.get_connection(sid) as conn:
-            row = conn.execute(
-                "SELECT role, content, seq FROM messages WHERE session_id=? ORDER BY seq", (sid,)
-            ).fetchone()
-        assert row[0] == "user"
-        assert row[1] == "Hello, world!"
-        assert row[2] == 0
-
-    def test_auto_title_on_first_user_message(self, sm):
-        sid = sm.create_session()
-        sm.save_message(sid, {"role": "system", "content": "You are helpful."})
-        sm.save_message(sid, {"role": "user", "content": "帮我写一个 Python 的 HTTP 服务器"})
-        sessions = sm.list_sessions()
-        assert sessions[0].title == "帮我写一个 Python 的 HTTP 服务器"
-
-    def test_auto_title_truncates_at_50_chars(self, sm):
-        sid = sm.create_session()
-        long_msg = "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的消息"
-        sm.save_message(sid, {"role": "user", "content": long_msg})
-        sessions = sm.list_sessions()
-        assert len(sessions[0].title) <= 50
-
-    def test_auto_title_not_overwritten_by_second_user_msg(self, sm):
-        sid = sm.create_session()
-        sm.save_message(sid, {"role": "user", "content": "First message"})
-        sm.save_message(sid, {"role": "assistant", "content": "OK"})
-        sm.save_message(sid, {"role": "user", "content": "Second message"})
-        sessions = sm.list_sessions()
-        assert sessions[0].title == "First message"
-
-    def test_save_updates_message_count(self, sm):
-        sid = sm.create_session()
-        sm.save_message(sid, {"role": "user", "content": "a"})
-        sm.save_message(sid, {"role": "assistant", "content": "b"})
-        sessions = sm.list_sessions()
-        assert sessions[0].message_count == 2
-
-    def test_save_tool_call_message(self, sm):
-        sid = sm.create_session()
-        assistant_msg = {
+        mgr.append_message(sid, {"role": "user", "content": "ls"})
+        mgr.append_message(sid, {
             "role": "assistant",
             "content": None,
             "tool_calls": [{
@@ -152,124 +60,175 @@ class TestSaveMessage:
                 "type": "function",
                 "function": {"name": "bash", "arguments": '{"command":"ls"}'},
             }],
-        }
-        sm.save_message(sid, assistant_msg)
-
-        tool_msg = {"role": "tool", "tool_call_id": "call_001", "content": "file1.py\nfile2.py"}
-        sm.save_message(sid, tool_msg)
-
-        msgs = sm.load_messages(sid)
-        assert msgs[0]["role"] == "assistant"
-        assert msgs[0]["tool_calls"][0]["function"]["name"] == "bash"
-        assert msgs[1]["role"] == "tool"
-        assert msgs[1]["tool_call_id"] == "call_001"
-
-    def test_save_handles_sdk_object(self, sm):
-        """验证 save_message 兼容 OpenAI SDK ChatCompletionMessage 对象。"""
-        class FakeToolCall:
-            def __init__(self):
-                self.id = "call_sdk"
-                self.type = "function"
-                self.function = type("fn", (), {"name": "read_file", "arguments": '{}'})()
-
-        class FakeMsg:
-            role = "assistant"
-            content = "I'll read the file."
-            tool_calls = [FakeToolCall()]
-
-        sid = sm.create_session()
-        sm.save_message(sid, FakeMsg())
-        msgs = sm.load_messages(sid)
-        assert msgs[0]["role"] == "assistant"
-        assert msgs[0]["tool_calls"][0]["id"] == "call_sdk"
-
-
-class TestLoadMessages:
-    def test_load_restores_tool_name(self, sm):
-        sid = sm.create_session()
-        sm.save_message(sid, {
-            "role": "assistant",
-            "tool_calls": [{
-                "id": "call_abc",
-                "type": "function",
-                "function": {"name": "bash", "arguments": '{}'},
-            }],
         })
-        sm.save_message(sid, {"role": "tool", "tool_call_id": "call_abc", "content": "result"})
-        msgs = sm.load_messages(sid)
-        assert msgs[1]["tool_name"] == "bash"
+        mgr.append_message(sid, {
+            "role": "tool",
+            "tool_call_id": "call_001",
+            "content": "file1.py",
+        })
+        mgr.append_message(sid, {
+            "role": "assistant",
+            "content": "当前目录: file1.py",
+        })
 
-    def test_load_empty_session(self, sm):
-        sid = sm.create_session()
-        assert sm.load_messages(sid) == []
+        snap = mgr.load_session(sid)
+        roles = [m["role"] for m in snap.messages]
+        assert roles == ["system", "user", "assistant", "tool", "assistant"]
 
-    def test_load_preserves_seq_order(self, sm):
-        sid = sm.create_session()
-        for i, role in enumerate(["system", "user", "assistant", "user"]):
-            sm.save_message(sid, {"role": role, "content": str(i)})
-        msgs = sm.load_messages(sid)
-        assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]
-        assert [m["content"] for m in msgs] == ["0", "1", "2", "3"]
+        # tool 消息无 tool_name 字段
+        tool_msg = snap.messages[3]
+        assert tool_msg["tool_call_id"] == "call_001"
+        assert "tool_name" not in tool_msg
 
-
-class TestPermissions:
-    def test_save_and_load(self, sm):
-        sid = sm.create_session()
-        sm.save_permission(sid, "bash")
-        sm.save_permission(sid, "read_file")
-        assert sm.load_permissions(sid) == {"bash", "read_file"}
-
-    def test_insert_ignore_duplicate(self, sm):
-        sid = sm.create_session()
-        sm.save_permission(sid, "bash")
-        sm.save_permission(sid, "bash")  # 不抛异常
-        assert sm.load_permissions(sid) == {"bash"}
+        # 恢复消息只含四个字段
+        for m in snap.messages:
+            assert set(m.keys()).issubset(
+                {"role", "content", "tool_calls", "tool_call_id"}
+            )
 
 
-class TestTodos:
-    def test_save_and_load(self, sm):
-        sid = sm.create_session()
+# ------------------------------------------------------------------
+# T022: PermissionGrant + 空 Todo 往返
+# ------------------------------------------------------------------
+
+
+class TestGrantAndTodoRoundtrip:
+    """验证 grant 和 Todo 的正确往返。"""
+
+    def test_grant_roundtrip(self, mgr):
+        """save_grant → load_session → grant 恢复一致。"""
+        from tooling.permission.engine import PermissionGrant
+
+        sid = mgr.create_session({"role": "system", "content": "test"})
+        mgr.append_message(sid, {"role": "user", "content": "hi"})
+
+        grant = PermissionGrant(tool_name="bash", rule_content="执行系统命令")
+        mgr.save_grant(sid, grant)
+
+        snap = mgr.load_session(sid)
+        assert len(snap.permissions) == 1
+        assert snap.permissions[0].tool_name == "bash"
+        assert snap.permissions[0].rule_content == "执行系统命令"
+
+    def test_empty_todo_roundtrip(self, mgr):
+        """空 Todo 列表保存后恢复为 []。"""
+        sid = mgr.create_session({"role": "system", "content": "test"})
+        mgr.append_message(sid, {"role": "user", "content": "hi"})
+
+        mgr.save_todos(sid, [])
+        snap = mgr.load_session(sid)
+        assert snap.todos == []
+
+    def test_nonempty_todo_roundtrip(self, mgr):
+        """非空 Todo 保存后恢复，含 position 顺序。"""
+        sid = mgr.create_session({"role": "system", "content": "test"})
+        mgr.append_message(sid, {"role": "user", "content": "hi"})
+
         todos = [
-            {"content": "Task A", "status": "completed", "activeForm": "Completing Task A"},
-            {"content": "Task B", "status": "in_progress", "activeForm": "Working on Task B"},
+            {"content": "任务A", "status": "completed", "active_form": "做A", "position": 0},
+            {"content": "任务B", "status": "in_progress", "active_form": "做B", "position": 1},
+            {"content": "任务C", "status": "pending", "active_form": "做C", "position": 2},
         ]
-        sm.save_todos(sid, todos)
-        loaded = sm.load_todos(sid)
-        assert len(loaded) == 2
-        assert loaded[0]["content"] == "Task A"
-        assert loaded[0]["status"] == "completed"
+        mgr.save_todos(sid, todos)
 
-    def test_save_overwrites_previous(self, sm):
-        sid = sm.create_session()
-        sm.save_todos(sid, [{"content": "Old", "status": "pending", "activeForm": "Old"}])
-        sm.save_todos(sid, [{"content": "New", "status": "completed", "activeForm": "New"}])
-        loaded = sm.load_todos(sid)
-        assert len(loaded) == 1
-        assert loaded[0]["content"] == "New"
+        snap = mgr.load_session(sid)
+        assert snap.todos == todos
 
 
-class TestCleanupIfEmpty:
-    def test_cleans_empty_session(self, sm):
-        sid = sm.create_session()
-        sm.cleanup_if_empty(sid)
-        # 检查数据库文件被删除且连接已关闭
-        assert not os.path.exists(os.path.join(sm.sessions_dir, f"{sid}.db"))
-        assert sid not in sm._connections
-
-    def test_keeps_non_empty_session(self, sm):
-        sid = sm.create_session()
-        sm.save_message(sid, {"role": "user", "content": "hello"})
-        sm.cleanup_if_empty(sid)
-        assert os.path.exists(os.path.join(sm.sessions_dir, f"{sid}.db"))
+# ------------------------------------------------------------------
+# T023: 损坏数据库被跳过且不残留文件锁
+# ------------------------------------------------------------------
 
 
-class TestClose:
-    def test_close_clears_all_connections(self, sm):
-        sid1 = sm.create_session()
-        sid2 = sm.create_session()
-        # 触发连接创建
-        sm.save_message(sid1, {"role": "user", "content": "a"})
-        sm.save_message(sid2, {"role": "user", "content": "b"})
-        assert len(sm._connections) == 2
-        sm.close()
-        assert len(sm._connections) == 0
+class TestCorruptedFileHandling:
+    """损坏数据库跳过 + Windows 无连接泄漏。"""
+
+    def test_corrupted_file_skipped_and_deletable(self, mgr):
+        """创建纯文本 .db → list_sessions 跳过 → 文件可删除。"""
+        # 创建合法 session
+        sid = mgr.create_session({"role": "system", "content": "valid"})
+        mgr.append_message(sid, {"role": "user", "content": "hi"})
+
+        # 创建纯文本伪装 .db
+        bad_id = str(uuid.uuid4())
+        bad_path = os.path.join(mgr.sessions_dir, f"{bad_id}.db")
+        with open(bad_path, "w") as f:
+            f.write("this is not a database")
+
+        try:
+            sessions = mgr.list_sessions()
+            assert len(sessions) == 1
+            assert sessions[0].id == sid
+            ids = [s.id for s in sessions]
+            assert bad_id not in ids
+        finally:
+            if os.path.exists(bad_path):
+                os.remove(bad_path)
+
+    def test_corrupted_json_is_reported_as_session_corrupted(self, mgr):
+        """消息 JSON 损坏时只暴露 Repository 领域异常。"""
+        sid = mgr.create_session({"role": "system", "content": "valid"})
+        mgr.append_message(sid, {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [],
+        })
+        db_path = os.path.join(mgr.sessions_dir, f"{sid}.db")
+        with contextlib.closing(sqlite3.connect(db_path)) as conn:
+            with conn:
+                conn.execute(
+                    "UPDATE messages SET tool_calls = 'not-json' WHERE role = 'assistant'"
+                )
+
+        with pytest.raises(SessionCorrupted, match="消息 JSON"):
+            mgr.load_session(sid)
+
+    def test_cleanup_query_error_never_deletes_database(self, mgr):
+        """无法确认 session 为空时必须保留文件并报告错误。"""
+        sid = str(uuid.uuid4())
+        db_path = os.path.join(mgr.sessions_dir, f"{sid}.db")
+        with open(db_path, "w", encoding="utf-8") as file:
+            file.write("not a sqlite database")
+
+        with pytest.raises(SessionError, match="清理空 session"):
+            mgr.cleanup_if_empty(sid)
+        assert os.path.exists(db_path)
+
+    def test_mismatched_database_identity_is_corrupted(self, mgr):
+        """文件名 UUID 与 sessions.id 不一致时拒绝构造混合快照。"""
+        sid = mgr.create_session({"role": "system", "content": "valid"})
+        db_path = os.path.join(mgr.sessions_dir, f"{sid}.db")
+        other_id = str(uuid.uuid4())
+        with contextlib.closing(sqlite3.connect(db_path)) as conn:
+            with conn:
+                conn.execute("PRAGMA foreign_keys = OFF")
+                conn.execute("UPDATE sessions SET id = ?", (other_id,))
+
+        with pytest.raises(SessionCorrupted, match="身份不一致"):
+            mgr.load_session(sid)
+
+
+class TestRepositoryTransactions:
+    """Repository 的事务与 metadata 不变量。"""
+
+    def test_load_session_explicitly_begins_read_transaction(self, mgr):
+        """完整快照读取必须显式开启事务，不能依赖 SELECT 隐式行为。"""
+        sid = mgr.create_session({"role": "system", "content": "valid"})
+        statements: list[str] = []
+        real_connect = sqlite3.connect
+
+        def traced_connect(*args, **kwargs):
+            conn = real_connect(*args, **kwargs)
+            conn.set_trace_callback(statements.append)
+            return conn
+
+        with patch("agent.session_manager.sqlite3.connect", side_effect=traced_connect):
+            mgr.load_session(sid)
+
+        assert any(statement.strip().upper() == "BEGIN" for statement in statements)
+
+    def test_whitespace_user_message_keeps_untitled_fallback(self, mgr):
+        """纯空白首条 user 消息不能成为不可见标题。"""
+        sid = mgr.create_session({"role": "system", "content": "valid"})
+        mgr.append_message(sid, {"role": "user", "content": "   "})
+        assert mgr.load_session(sid).title == "Untitled"

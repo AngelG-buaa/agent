@@ -47,6 +47,9 @@ Desktop.ini
 CLAUDE.md
 AGENTS.md
 
+# ===== myAgent sessions =====
+.myagent/
+
 # ===== mine =====
 claude-code-analysis/
 Stage 1/Claude

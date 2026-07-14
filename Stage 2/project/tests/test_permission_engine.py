@@ -8,7 +8,6 @@ from tooling.permission.policy import PermissionRule, RuleBehavior
 from tooling.permission.exceptions import (
     NonPersistablePermission,
     InvalidPermissionGrant,
-    InvalidPermissionRule,
 )
 
 
@@ -76,6 +75,23 @@ class TestExecutorIsolation:
 
         # engine_b 完全不受影响
         assert len(engine_b._session_rules) == 0
+
+    def test_unknown_approval_decision_fails_closed(self):
+        """审批器返回未知值时拒绝执行，不能隐式视为 allow。"""
+        from tooling.executor import ToolExecutor
+        from tools.calculator import CalculatorTool
+
+        engine = PermissionEngine(default_behavior="ask")
+        executor = ToolExecutor(
+            permission_engine=engine,
+            approver=lambda name, params, reason: {"decision": "typo"},
+        )
+        executor.register(CalculatorTool())
+
+        result = executor.execute("calculator", {"expression": "1+1"})
+
+        assert "error" in result
+        assert "无效" in result["error"]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -363,7 +379,7 @@ class TestPolicyRuleValidation:
     """Engine 初始化时的策略规则校验。"""
 
     def test_duplicate_natural_key_raises(self):
-        """策略规则中 (tool_name, rule_content) 重复 → InvalidPermissionRule。"""
+        """策略规则中 (tool_name, rule_content) 重复时抛出 ValueError。"""
         r1 = PermissionRule(
             tool_name="bash", rule_behavior=RuleBehavior.ASK,
             rule_content="same_content", message="规则1",
@@ -375,7 +391,7 @@ class TestPolicyRuleValidation:
             condition=lambda t, p: True, rule_id="id2",
         )
 
-        with pytest.raises(InvalidPermissionRule):
+        with pytest.raises(ValueError):
             PermissionEngine(policy_rules=[r1, r2])
 
     def test_unique_natural_keys_pass(self):

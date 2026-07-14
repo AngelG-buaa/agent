@@ -23,13 +23,3 @@ class InvalidPermissionGrant(PermissionArchitectureError):
     抛出场景: replace_session_rules() 收到一个 (tool_name, rule_content)
     在当前 _policy_rules_by_key 中找不到对应策略规则的 grant。
     """
-
-
-class InvalidPermissionRule(PermissionArchitectureError):
-    """策略规则配置无效。
-
-    抛出场景:
-    - 策略规则集合中 (tool_name, rule_content) 存在重复
-    - allow_for_session() 传入不属于当前 engine 的 matched_rule
-    - matched_rule.rule_id 为 None 但需要持久化
-    """

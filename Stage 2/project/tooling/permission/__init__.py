@@ -10,7 +10,6 @@
   - PermissionArchitectureError — 权限异常基类
   - NonPersistablePermission    — fallback ASK 不可持久化
   - InvalidPermissionGrant      — grant 无效
-  - InvalidPermissionRule       — 规则配置无效
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from .exceptions import (
     PermissionArchitectureError,
     NonPersistablePermission,
     InvalidPermissionGrant,
-    InvalidPermissionRule,
 )
 from .policy import PermissionRule, RuleBehavior, build_rules
 

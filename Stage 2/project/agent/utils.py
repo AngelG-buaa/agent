@@ -34,22 +34,39 @@ def _extract_key_param(name: str, args: dict) -> str:
     return ""
 
 
-def filter_assistant_message(msg) -> dict:
-    """将 LLM 返回的 assistant 消息转为干净的 dict。
+def normalize_message(msg) -> dict:
+    """将 SDK ChatCompletionMessage 或 dict 归一化为仅含 4 字段的纯 dict。
 
-    去掉 reasoning_content（模型内部独白），避免在后续轮次中
-    重复发送，造成 O(N²) 级别的 token 浪费。
+    这是项目中消息归一化的唯一入口。合并了旧 Agent._normalize_message()
+    和 filter_assistant_message() 的职责。
 
-    只保留 OpenAI API 需要的字段：role, content, tool_calls。
+    输出字段（值为 None/空时省略该键）:
+        role: str           — 始终存在
+        content: str | None — None 时省略
+        tool_calls: list    — 空/None 时省略
+        tool_call_id: str   — None 时省略
     """
-    d: dict = {"role": msg.role}
-    if msg.content:
-        d["content"] = msg.content
-    if msg.tool_calls:
-        d["tool_calls"] = [
+    if isinstance(msg, dict):
+        result: dict = {"role": msg.get("role", "")}
+        if msg.get("content") is not None:
+            result["content"] = msg["content"]
+        if msg.get("tool_calls"):
+            result["tool_calls"] = msg["tool_calls"]
+        if msg.get("tool_call_id"):
+            result["tool_call_id"] = msg["tool_call_id"]
+        return result
+
+    result: dict = {"role": getattr(msg, "role", "")}
+
+    content = getattr(msg, "content", None)
+    if content is not None:
+        result["content"] = content
+
+    if hasattr(msg, "tool_calls") and msg.tool_calls:
+        result["tool_calls"] = [
             {
                 "id": tc.id,
-                "type": tc.type,
+                "type": getattr(tc, "type", "function"),
                 "function": {
                     "name": tc.function.name,
                     "arguments": tc.function.arguments,
@@ -57,7 +74,11 @@ def filter_assistant_message(msg) -> dict:
             }
             for tc in msg.tool_calls
         ]
-    return d
+
+    if hasattr(msg, "tool_call_id") and msg.tool_call_id:
+        result["tool_call_id"] = msg.tool_call_id
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════

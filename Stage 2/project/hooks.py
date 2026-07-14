@@ -30,11 +30,23 @@ HOOKS: dict[str, list[HookCallback]] = {
 }
 
 
-def register_hook(event: str, callback: HookCallback) -> None:
-    """注册 hook 回调。回调按注册顺序依次触发。"""
+def register_hook(event: str, callback: HookCallback) -> Callable[[], None]:
+    """注册 Hook 回调，返回幂等 disposer。
+
+    调用 disposer() 即从 HOOKS 中移除该回调。重复调用无害（幂等）。
+    """
     if event not in HOOKS:
         raise ValueError(f"未知的 hook 事件: {event}")
     HOOKS[event].append(callback)
+
+    def dispose() -> None:
+        """幂等地从 HOOKS 中移除 callback。"""
+        try:
+            HOOKS[event].remove(callback)
+        except (ValueError, KeyError):
+            pass  # 已移除
+
+    return dispose
 
 
 def trigger_hooks(event: str, *args) -> dict | None:

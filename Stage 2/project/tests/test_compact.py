@@ -337,8 +337,8 @@ class TestL2MicroCompact:
 class TestL4CompactHistory:
     """L4: LLM 摘要 + 重试/降级。"""
 
-    def test_saves_transcript_and_replaces_messages(self):
-        """成功：保存 transcript + 消息替换为摘要。"""
+    def test_replaces_messages_with_summary(self):
+        """成功：消息被替换为摘要。"""
         msgs = [
             _make_msg("system", "You are helpful."),
             _make_msg("user", "Build a web server."),
@@ -349,22 +349,11 @@ class TestL4CompactHistory:
         mock_response.content = "用户请求构建 Web 服务器。已完成框架搭建。"
         mock_llm.chat.return_value = ("stop", mock_response)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            import agent.compact as cmod
-            orig_trans = cmod.TRANSCRIPT_DIR
-            cmod.TRANSCRIPT_DIR = Path(tmpdir)
-            try:
-                compact_history(msgs, mock_llm)
-                # 消息被替换为摘要 + system
-                assert len(msgs) == 2  # system + compact
-                assert msgs[0]["role"] == "system"
-                assert "[Compacted]" in msgs[1]["content"]
-                assert "Web 服务器" in msgs[1]["content"]
-                # transcript 已保存
-                files = list(Path(tmpdir).glob("transcript_*.jsonl"))
-                assert len(files) == 1
-            finally:
-                cmod.TRANSCRIPT_DIR = orig_trans
+        compact_history(msgs, mock_llm)
+        assert len(msgs) == 2  # system + compact
+        assert msgs[0]["role"] == "system"
+        assert "[Compacted]" in msgs[1]["content"]
+        assert "Web 服务器" in msgs[1]["content"]
 
     def test_preserves_system_message(self):
         """L4 后 system 消息保留在首位。"""
@@ -378,16 +367,9 @@ class TestL4CompactHistory:
         mock_response.content = "Summary."
         mock_llm.chat.return_value = ("stop", mock_response)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            import agent.compact as cmod
-            orig_trans = cmod.TRANSCRIPT_DIR
-            cmod.TRANSCRIPT_DIR = Path(tmpdir)
-            try:
-                compact_history(msgs, mock_llm)
-                assert msgs[0]["role"] == "system"
-                assert msgs[0]["content"] == "SYSTEM PROMPT HERE"
-            finally:
-                cmod.TRANSCRIPT_DIR = orig_trans
+        compact_history(msgs, mock_llm)
+        assert msgs[0]["role"] == "system"
+        assert msgs[0]["content"] == "SYSTEM PROMPT HERE"
 
     def test_retries_then_degrades(self):
         """LLM 调用持续失败 → 重试 N 次 → 降级跳过（消息不变）。"""
@@ -399,18 +381,9 @@ class TestL4CompactHistory:
         mock_llm = MagicMock()
         mock_llm.chat.side_effect = RuntimeError("API error")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            import agent.compact as cmod
-            orig_trans = cmod.TRANSCRIPT_DIR
-            cmod.TRANSCRIPT_DIR = Path(tmpdir)
-            try:
-                compact_history(msgs, mock_llm)
-                # 消息不变
-                assert msgs == original
-                # 重试了 3 次（SUMMARY_RETRY_COUNT=2, so 2+1=3 attempts）
-                assert mock_llm.chat.call_count == 3
-            finally:
-                cmod.TRANSCRIPT_DIR = orig_trans
+        compact_history(msgs, mock_llm)
+        assert msgs == original
+        assert mock_llm.chat.call_count == 3
 
 
 # ═══════════════════════════════════════════════════════════
@@ -491,9 +464,7 @@ class TestIntegration:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             import agent.compact as cmod
-            orig_trans = cmod.TRANSCRIPT_DIR
             orig_tool = cmod.TOOL_RESULTS_DIR
-            cmod.TRANSCRIPT_DIR = Path(tmpdir) / "trans"
             cmod.TOOL_RESULTS_DIR = Path(tmpdir) / "tools"
             try:
                 compact_pipeline(msgs, mock_llm)
@@ -503,10 +474,7 @@ class TestIntegration:
                 # L4 不应被调用（未超阈值）
                 mock_llm.chat.assert_not_called()
                 # 不应该创建任何文件
-                trans_dir = Path(tmpdir) / "trans"
-                assert not trans_dir.exists() or len(list(trans_dir.glob("*"))) == 0
             finally:
-                cmod.TRANSCRIPT_DIR = orig_trans
                 cmod.TOOL_RESULTS_DIR = orig_tool
 
 

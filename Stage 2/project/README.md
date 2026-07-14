@@ -4,13 +4,16 @@
 
 ## 项目背景
 
-这是 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 教程的实践项目，通过阅读 Claude Code 源码理解 Agent 架构，然后从零实现一个简化版。项目经历了两个主要迭代：
+这是 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 教程的实践项目，通过阅读 Claude Code 源码理解 Agent 架构，然后从零实现一个简化版。项目经历了多轮迭代：
 
 | 迭代 | Spec | 内容 |
 |------|------|------|
 | 001 | [specs/001-todo-write-tool/](specs/001-todo-write-tool/) | 加入 TodoWrite 工具——Agent 在执行复杂任务前规划步骤、跟踪进度 |
 | 002 | [specs/002-task-subagent-tool/](specs/002-task-subagent-tool/) | 加入 Task 工具 + SubAgent 子类——上下文隔离、子任务委派 |
 | 003 | [specs/003-context-compact/](specs/003-context-compact/) | Context Compact——四层渐进式压缩管线，防止长对话上下文溢出 |
+| 004 | [specs/004-interactive-conversation/](specs/004-interactive-conversation/) | 交互式对话——多轮 REPL 对话 + Agent 反问工具 |
+| 006 | [specs/006-permission-refactor/](specs/006-permission-refactor/) | 权限重构——实例级权限门禁 + PermissionGrant 值对象 + listener 机制 |
+| 007 | [specs/007-session-persistence/](specs/007-session-persistence/) | Session 持久化——Conversation→SessionController→SessionManager 三层 + `--resume` + `/resume` |
 
 每个迭代遵循 [Spec Kit](.specify/) 流程：Specify → Clarify → Plan → Tasks → Implement → Analyze。
 
@@ -18,7 +21,7 @@
 
 ```
 Stage 2/project/
-├── main.py                  # CLI 入口：组装 LLM → Executor → Agent，执行问答
+├── main.py                  # Composition Root：解析参数、组装依赖、启动 Conversation
 ├── config.py                # 集中配置（LLM API、Embedding、RAG、Workdir）
 ├── hooks.py                 # Hook 事件系统（register_hook / trigger_hooks）
 ├── README.md                # ← 你正在看的这个文件
@@ -26,9 +29,13 @@ Stage 2/project/
 ├── agent/                   # Agent 层：核心循环 + 提示词 + 工具函数 + 压缩管线
 │   ├── agent.py             # Agent 类 (Think→Act→Observe) + SubAgent(Agent) 子类
 │   ├── compact.py           # 四层上下文压缩管线 (L3→L1→L2→L4)
+│   ├── conversation.py      # REPL、命令解析和统一 session 菜单
 │   ├── llm_client.py        # LLMClient：OpenAI 兼容 API 封装
 │   ├── prompts.py           # SYSTEM_PROMPT + SUB_SYSTEM_PROMPT
-│   └── utils.py             # 打印回调 + filter_assistant_message + 消息访问器
+│   ├── session_controller.py # active session 生命周期和消息持久化出口
+│   ├── session_manager.py   # 纯 SQLite Repository
+│   ├── ui.py                # session 列表、操作菜单和终端输入
+│   └── utils.py             # 消息归一化、访问器和打印回调
 │
 ├── tools/                   # 工具层：12 个内置工具
 │   ├── __init__.py          # register_all() — 统一注册入口
@@ -68,9 +75,13 @@ Stage 2/project/
 │   └── prompts.py           # 引用格式规则
 │
 ├── tests/                   # 测试
-│   ├── test_compact.py      # 上下文压缩管线（28 tests）
-│   ├── test_todo_write.py   # TodoWrite 相关（34 tests）
-│   └── test_task.py         # SubAgent + Task + Agent 扩展（37 tests）
+│   ├── test_compact.py      # 上下文压缩管线
+│   ├── test_conversation.py # REPL 和 session 菜单
+│   ├── test_permission_engine.py # 权限评估和 grant
+│   ├── test_session_manager.py # SQLite Repository
+│   ├── test_session_persistence.py # 主消息持久化链路
+│   ├── test_todo_write.py   # TodoWrite 相关
+│   └── test_task.py         # SubAgent + Task + Agent 扩展
 │
 ├── docs/                    # 设计文档
 │   ├── architecture-philosophy.md  # 架构原则（从 Claude Code 源码提炼）
@@ -80,7 +91,10 @@ Stage 2/project/
 ├── specs/                   # 功能规范（Spec Kit 产物）
 │   ├── 001-todo-write-tool/
 │   ├── 002-task-subagent-tool/
-│   └── 003-context-compact/
+│   ├── 003-context-compact/
+│   ├── 004-interactive-conversation/
+│   ├── 006-permission-refactor/
+│   └── 007-session-persistence/
 │
 └── .specify/                # Spec Kit 配置
     ├── memory/constitution.md  # 项目宪章
@@ -96,7 +110,7 @@ Stage 2/project/
 # agent/agent.py — Agent.run()
 for _ in range(self.max_steps):
     # ① PreLLMCall hook（可注入消息）
-    inject = trigger_hooks("PreLLMCall")
+    inject = self._trigger_hook("PreLLMCall")
 
     # ② Compact: 四层渐进式上下文压缩
     compact_pipeline(messages, self.llm)
@@ -106,13 +120,15 @@ for _ in range(self.max_steps):
 
     # ④ Act: 执行工具调用
     if stop_reason == "tool_calls":
-        self._execute_tool_calls(msg.tool_calls, messages)
+        _emit_message(normalize_message(msg), messages, on_message)
+        self._execute_tool_calls(msg.tool_calls, messages, on_message)
 
     # ⑤ PostRound hook（副作用跟踪）
-    trigger_hooks("PostRound", stop_reason, tool_calls)
+    self._trigger_hook("PostRound", stop_reason, tool_calls)
 
     # ⑥ Observe: 判断终止
     if stop_reason != "tool_calls":
+        _emit_message(normalize_message(msg), messages, on_message)
         return msg.content
 ```
 
@@ -132,12 +148,12 @@ for _ in range(self.max_steps):
 
 ### Hook 系统
 
-7 个事件类型（`hooks.py`）。回调返回非 None 的 dict 即中断链路。注册方式：`register_hook(event, callback)`。
+7 个事件类型（`hooks.py`）。回调返回非 None 的 dict 即中断链路。`register_hook(event, callback)` 返回幂等 disposer，注册方负责在生命周期结束时调用。
 
 | 事件 | 触发位置 | 用途 |
 |------|---------|------|
-| `SessionStart` | main.py | 会话初始化 |
-| `UserPromptSubmit` | Agent.run() | 用户输入后 |
+| `SessionStart` | 预留 | 会话初始化扩展点 |
+| `UserPromptSubmit` | 预留 | 用户输入扩展点 |
 | `PreLLMCall` | Agent.run() 每轮 | 消息注入（todo 提醒） |
 | `PreToolUse` | executor.execute() | 工具执行前通知（日志/观测，非权限） |
 | `PostToolUse` | executor.execute() | 工具执行后 |
@@ -145,6 +161,21 @@ for _ in range(self.max_steps):
 | `PreAgentStop` | Agent.run() 退出 | Agent 停止前 |
 
 **注意**：`PreLLMCall` 是控制型 hook（返回值改变循环行为），其余为通知型。权限检查不再走全局 Hook——已改为 ToolExecutor 实例内部通过构造注入的 PermissionEngine 完成。参见 [TECH_DEBT #1](docs/TECH_DEBT.md)。
+
+### Session 持久化
+
+生产对话始终运行在持久化模式，不提供无 Repository 的 transient Conversation。依赖关系保持单向：
+
+```text
+main.py
+  → Conversation（REPL 和菜单）
+    → SessionController（active 生命周期、消息出口、权限/Todo 切换）
+      → SessionManager（SQLite 事务和 CRUD）
+```
+
+`Conversation` 构造时必须注入 `SessionManager`、`PermissionEngine` 和真实 system message。主会话消息采用单一 sink：Controller 先写 SQLite，成功后再追加到 working context。SubAgent 继续使用自己的局部 messages，不接收主 Controller 的消息出口。
+
+每个 session 使用独立的 `.db` 文件，保存 system/user/assistant/tool 消息、PermissionGrant 和 Todo。`--resume` 在启动时恢复，REPL 内输入 `/resume` 可切换、重命名或删除历史 session。
 
 ### Context Compact（上下文压缩）
 
@@ -179,7 +210,7 @@ for _ in range(self.max_steps):
 | `print_handler` | `default_print_handler` | `sub_print_handler` |
 | `_round` 跟踪 | 无 | 有（第 30 轮注入提醒） |
 
-创建方式：`sub = SubAgent(llm=llm, executor=executor); result = sub.run(description)`。
+通常由 `TaskTool` 调用 `spawn_subagent(description, llm, executor)` 创建。直接使用 `SubAgent` 时，需要自行构造独立的 system/user messages 后调用 `run(messages)`。
 
 ## 运行
 
@@ -187,9 +218,15 @@ for _ in range(self.max_steps):
 # 激活环境
 D:/Miniconda/envs/llm/python --version  # Python 3.12+
 
-# 运行 Agent
+# 运行 Agent（新建 session）
 cd Stage 2/project
 D:/Miniconda/envs/llm/python main.py
+
+# 恢复历史 session（交互式选择 + 删除/重命名）
+D:/Miniconda/envs/llm/python main.py --resume
+
+# REPL 内切换 session
+# 在对话中输入 /resume
 
 # 运行全部测试
 D:/Miniconda/envs/llm/python -m pytest tests/ -q
@@ -199,13 +236,16 @@ D:/Miniconda/envs/llm/python -m pytest tests/ -q
 
 | 文档 | 用途 |
 |------|------|
-| [.specify/memory/constitution.md](.specify/memory/constitution.md) | 9 条开发原则（最高准则） |
+| [.specify/memory/constitution.md](.specify/memory/constitution.md) | 10 条开发原则（最高准则） |
 | [docs/architecture-philosophy.md](docs/architecture-philosophy.md) | 架构设计哲学（从 Claude Code 提炼） |
 | [docs/anti-patterns.md](docs/anti-patterns.md) | 开发中踩过的坑 |
 | [docs/TECH_DEBT.md](docs/TECH_DEBT.md) | 技术债追踪（触发条件 + 方案） |
 | [specs/001-todo-write-tool/](specs/001-todo-write-tool/) | 迭代 1：TodoWrite |
 | [specs/002-task-subagent-tool/](specs/002-task-subagent-tool/) | 迭代 2：SubAgent |
 | [specs/003-context-compact/](specs/003-context-compact/) | 迭代 3：Context Compact |
+| [specs/004-interactive-conversation/](specs/004-interactive-conversation/) | 迭代 4：交互式对话 |
+| [specs/006-permission-refactor/](specs/006-permission-refactor/) | 迭代 6：权限重构 |
+| [specs/007-session-persistence/](specs/007-session-persistence/) | 迭代 7：Session 持久化 |
 
 ## 技术栈
 

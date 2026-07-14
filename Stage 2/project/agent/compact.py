@@ -8,7 +8,6 @@
 
 import json
 import os
-import time
 from pathlib import Path
 
 from config import compaction as cfg
@@ -26,7 +25,6 @@ from agent.utils import (
 # ---------------------------------------------------------------------------
 
 _WORKDIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TRANSCRIPT_DIR = _WORKDIR / ".transcripts"
 TOOL_RESULTS_DIR = _WORKDIR / ".task_outputs" / "tool-results"
 
 # ---------------------------------------------------------------------------
@@ -218,19 +216,12 @@ def micro_compact(messages: list) -> None:
 # ---------------------------------------------------------------------------
 
 def compact_history(messages: list, llm) -> None:
-    """保存完整对话 → 调 LLM 生成摘要 → 用摘要替代全部历史。
+    """调用 LLM 生成摘要，并用摘要替代历史消息。
 
     重试机制: 最多重试 SUMMARY_RETRY_COUNT 次，全部失败则降级跳过。
     Post-compact: 恢复 CURRENT_TODOS（若非空）。
     """
-    # # 1. 保存完整对话到磁盘（归一化序列化）
-    # _ensure_dir(TRANSCRIPT_DIR)
-    # transcript_path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
-    # with transcript_path.open("w", encoding="utf-8") as f:
-    #     for msg in messages:
-    #         f.write(json.dumps(to_serializable(msg), ensure_ascii=False, default=str) + "\n")
-
-    # 2. 构建摘要 prompt（中文，5 维度）
+    # 1. 构建摘要 prompt（中文，5 维度）
     serializable = [to_serializable(m) for m in messages]
     conversation_text = json.dumps(serializable, ensure_ascii=False, default=str)
     if len(conversation_text) > SUMMARY_INPUT_CAP:
@@ -248,7 +239,7 @@ def compact_history(messages: list, llm) -> None:
         + conversation_text
     )
 
-    # 3. 带重试的 LLM 摘要调用
+    # 2. 带重试的 LLM 摘要调用
     summary = None
     for attempt in range(SUMMARY_RETRY_COUNT + 1):
         try:
@@ -268,7 +259,7 @@ def compact_history(messages: list, llm) -> None:
     if not summary:
         return
 
-    # 4. 保留 system 消息，其余替换为摘要
+    # 3. 保留 system 消息，其余替换为摘要
     system_msg = messages[0] if messages and get_role(messages[0]) == "system" else None
     compact_msg: dict = {
         "role": "user",
@@ -278,7 +269,7 @@ def compact_history(messages: list, llm) -> None:
     if system_msg:
         messages.insert(0, system_msg)
 
-    # 5. Post-compact: 恢复 Todo 列表
+    # 4. Post-compact: 恢复 Todo 列表
     _restore_todos(messages)
 
 

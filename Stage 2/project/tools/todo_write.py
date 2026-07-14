@@ -104,55 +104,96 @@ class TodoWriteTool(Tool):
 
 
 # ═══════════════════════════════════════════════════════════════
+# Session 持久化：快照与替换
+# ═══════════════════════════════════════════════════════════════
+
+
+def snapshot_todos() -> list[dict]:
+    """返回 CURRENT_TODOS 的浅拷贝快照（用于持久化）。"""
+    return list(CURRENT_TODOS)
+
+
+def replace_todos(todos: list[dict]) -> None:
+    """原子替换 Todo 列表（clear + extend，不重新绑定引用）。
+
+    空列表也必须替换——覆盖旧 session 的 Todo 状态。
+    """
+    CURRENT_TODOS.clear()
+    CURRENT_TODOS.extend(todos)
+
+
+# ═══════════════════════════════════════════════════════════════
 # Hook 注册：TodoWrite 提醒机制
 # ═══════════════════════════════════════════════════════════════
 
 
-def _create_todo_reminder_hooks():
-    """Closure 工厂：捕获独立计数器，避免 Agent 实例间状态泄漏。
+class TodoReminderHandle:
+    """封装 reminder 计数器。不直接访问全局 HOOKS。
 
-    返回 (on_pre_llm_call, on_post_round) 两个回调。
-    每次 register_todo_hooks() 调用创建新的闭包，计数器相互独立。
+    用法:
+        handle = register_todo_hooks()
+        handle.reset()   # 新建/恢复/切换 session 后
+        handle.dispose() # Controller 关闭时
     """
-    rounds_since_todo = 0
+
+    def __init__(self, pre_disposer, post_disposer):
+        self._pre_disposer = pre_disposer
+        self._post_disposer = post_disposer
+        self._counter = 0
+        self._disposed = False
+
+    def increment_and_check(self) -> bool:
+        """递增计数器，返回是否应触发提醒。"""
+        self._counter += 1
+        return self._counter >= 3
+
+    def reset(self) -> None:
+        """重置计数器为零（幂等）。"""
+        self._counter = 0
+
+    def dispose(self) -> None:
+        """调用 disposer 注销 hooks（幂等）。"""
+        if self._disposed:
+            return
+        self._pre_disposer()
+        self._post_disposer()
+        self._disposed = True
+
+
+def register_todo_hooks() -> TodoReminderHandle:
+    """装配 TodoWrite 提醒 hooks 并返回 handle。
+
+    用法:
+        todo_handle = register_todo_hooks()
+    """
+    from hooks import register_hook
+
+    handle = TodoReminderHandle(None, None)
 
     def on_post_round(stop_reason, tool_calls):
-        nonlocal rounds_since_todo
         if tool_calls and any(
             tc.function.name == "todo_write" for tc in tool_calls
         ):
-            rounds_since_todo = 0
+            handle.reset()
         elif CURRENT_TODOS:
-            rounds_since_todo += 1
-        return None  # 纯副作用，不阻断
+            handle.increment_and_check()
+        return None
 
     def on_pre_llm_call():
-        nonlocal rounds_since_todo
-        if rounds_since_todo >= 3:
-            rounds_since_todo = 0
+        if handle._counter >= 3:
+            handle.reset()
             return {
                 "messages": [{
                     "role": "user",
                     "content": "<reminder>Update your todos.</reminder>",
                 }]
             }
-        return None  # 无需注入
+        return None
 
-    return on_pre_llm_call, on_post_round
+    pre_disposer = register_hook("PreLLMCall", on_pre_llm_call)
+    post_disposer = register_hook("PostRound", on_post_round)
 
+    handle._pre_disposer = pre_disposer
+    handle._post_disposer = post_disposer
 
-def register_todo_hooks():
-    """装配 TodoWrite 提醒 hooks。
-
-    在 Agent 启动前调用一次。向 PreLLMCall 和 PostRound 注册回调：
-      - PostRound: 跟踪连续未调用 todo_write 的轮数
-      - PreLLMCall: 连续 3 轮后注入提醒消息
-
-    用法（main.py 中，在 register_all() 之后、agent.run() 之前）:
-        from tools.todo_write import register_todo_hooks
-        register_todo_hooks()
-    """
-    from hooks import register_hook
-    on_pre_llm, on_post = _create_todo_reminder_hooks()
-    register_hook("PreLLMCall", on_pre_llm)
-    register_hook("PostRound", on_post)
+    return handle

@@ -1,6 +1,7 @@
 """Conversation 类单元测试 —— 多轮对话编排器。"""
 
 import pytest
+import tempfile
 from unittest.mock import MagicMock, patch
 
 from agent.agent import Agent
@@ -14,10 +15,14 @@ class _FakeAgent:
         self.system_prompt = system_prompt
         self.call_history: list[list[dict]] = []
 
-    def run(self, messages: list[dict]) -> str:
+    def run(self, messages: list[dict], on_message=None) -> str:
         self.call_history.append(list(messages))  # 拷贝快照
-        # 模拟真实 Agent：追加 assistant 回复到 messages
-        messages.append({"role": "assistant", "content": "Mock response"})
+        # 模拟真实 Agent：使用 on_message sink 追加 assistant 回复
+        msg = {"role": "assistant", "content": "Mock response"}
+        if on_message is not None:
+            on_message(msg)
+        else:
+            messages.append(msg)
         return "Mock response"
 
 
@@ -27,21 +32,35 @@ def mock_agent():
 
 
 @pytest.fixture
-def conv(mock_agent):
-    return Conversation(mock_agent)
+def conv(mock_agent, tmp_path):
+    conv = _make_conversation(mock_agent, tmp_path)
+    conv._controller.start_new()
+    return conv
+
+
+def _make_conversation(agent, sessions_dir):
+    from agent.session_manager import SessionManager
+    from tooling.permission.engine import PermissionEngine
+
+    return Conversation(
+        agent,
+        session_manager=SessionManager(str(sessions_dir)),
+        permission_engine=PermissionEngine(default_behavior="allow"),
+        system_message={"role": "system", "content": agent.system_prompt},
+    )
 
 
 class TestConversationInit:
     """Conversation 初始化。"""
 
-    def test_initial_messages_empty(self, mock_agent):
-        """新 Conversation 的 messages 为空列表。"""
-        c = Conversation(mock_agent)
-        assert c.messages == []
+    def test_conversation_does_not_own_messages(self, mock_agent, tmp_path):
+        """Conversation 不持有会话消息。"""
+        c = _make_conversation(mock_agent, tmp_path)
+        assert not hasattr(c, "messages")
 
-    def test_interrupted_once_defaults_false(self, mock_agent):
+    def test_interrupted_once_defaults_false(self, mock_agent, tmp_path):
         """_interrupted_once 初始为 False。"""
-        c = Conversation(mock_agent)
+        c = _make_conversation(mock_agent, tmp_path)
         assert c._interrupted_once is False
 
 
@@ -49,12 +68,13 @@ class TestRunTurn:
     """_run_turn —— 单轮执行逻辑。"""
 
     def test_first_turn_inserts_system_prompt(self, conv, mock_agent):
-        """首轮：messages 为空时应自动插入 system prompt。"""
+        """新会话以 system prompt 开始，并记录首轮消息。"""
         conv._run_turn("hello")
 
-        assert len(conv.messages) >= 3  # system + user + assistant + ...
-        assert conv.messages[0] == {"role": "system", "content": mock_agent.system_prompt}
-        assert conv.messages[1] == {"role": "user", "content": "hello"}
+        messages = conv._controller.active.messages
+        assert len(messages) >= 3  # system + user + assistant + ...
+        assert messages[0] == {"role": "system", "content": mock_agent.system_prompt}
+        assert messages[1] == {"role": "user", "content": "hello"}
 
     def test_second_turn_no_duplicate_system_prompt(self, conv, mock_agent):
         """后续轮次不应重复插入 system prompt。"""
@@ -63,7 +83,7 @@ class TestRunTurn:
 
         # system prompt 应该只出现一次（在位置 0）
         system_count = sum(
-            1 for m in conv.messages if m.get("role") == "system"
+            1 for m in conv._controller.active.messages if m.get("role") == "system"
         )
         assert system_count == 1
 
@@ -77,13 +97,13 @@ class TestRunTurn:
         assert any("first" in str(m) for m in second_call_msgs)
         assert second_call_msgs[-1] == {"role": "user", "content": "second"}
 
-    def test_messages_mutated_in_place(self, conv, mock_agent):
-        """Agent.run() 对 messages 的修改反映在 conv.messages 中。"""
+    def test_agent_uses_active_session_messages(self, conv, mock_agent):
+        """Agent 使用 ActiveSession 持有的 working context。"""
         conv._run_turn("hello")
 
-        # call_history 有快照；conv.messages 应该有后续追加的内容
-        assert conv.messages is not mock_agent.call_history[0]
-        assert len(conv.messages) >= len(mock_agent.call_history[0])
+        messages = conv._controller.active.messages
+        assert messages is not mock_agent.call_history[0]
+        assert messages[-1] == {"role": "assistant", "content": "Mock response"}
 
 
 class TestStartLoop:
@@ -93,14 +113,16 @@ class TestStartLoop:
         """输入 /exit 应退出循环。"""
         with patch("builtins.input", side_effect=["/exit"]):
             conv.start()
-        # 不应抛异常，messages 应为空（没有执行任何 turn）
-        assert conv.messages == []
+
+    def test_start_accepts_resume_keyword(self, conv):
+        """统一启动入口接受 resume=False。"""
+        with patch("builtins.input", side_effect=["/exit"]):
+            conv.start(resume=False)
 
     def test_quit_command(self, conv):
         """输入 /quit 也应退出。"""
         with patch("builtins.input", side_effect=["/quit"]):
             conv.start()
-        assert conv.messages == []
 
     def test_empty_input_skipped(self, conv, mock_agent):
         """空输入应被忽略，不传给 Agent。"""
@@ -139,11 +161,11 @@ class TestKeyboardInterrupt:
 
         call_count = [0]
 
-        def run_with_interrupt(messages):
+        def run_with_interrupt(messages, on_message=None):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise KeyboardInterrupt
-            return original_run(messages)
+            return original_run(messages, on_message=on_message)
 
         mock_agent.run = run_with_interrupt
 
@@ -157,7 +179,7 @@ class TestKeyboardInterrupt:
         """连续两次 Ctrl+C → 退出。"""
         original_run = mock_agent.run
 
-        def run_always_interrupt(messages):
+        def run_always_interrupt(messages, on_message=None):
             raise KeyboardInterrupt
 
         mock_agent.run = run_always_interrupt
@@ -185,6 +207,46 @@ class TestApiError:
 
         # 第一轮报错被 catch，第二轮正常退出
         # 无异常传播
+
+
+class TestSessionMenu:
+    """启动菜单和 REPL 菜单共享的异常边界。"""
+
+    def test_invalid_grant_does_not_replace_active_session(self, mock_agent):
+        """恢复到含过期 grant 的 session 时留在当前 session。"""
+        from agent.session_manager import SessionManager
+        from tooling.permission.engine import PermissionEngine, PermissionGrant
+        from tooling.permission.exceptions import InvalidPermissionGrant
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = SessionManager(tmpdir)
+            engine = PermissionEngine(default_behavior="allow")
+            conv = Conversation(
+                mock_agent,
+                session_manager=manager,
+                permission_engine=engine,
+                system_message={"role": "system", "content": "system"},
+            )
+            current_id = conv._controller.start_new().id
+            target_id = manager.create_session({"role": "system", "content": "system"})
+            manager.save_grant(target_id, PermissionGrant("bash", "stale-rule"))
+
+            with (
+                patch("agent.ui.select_session", return_value=target_id),
+                patch("agent.ui.show_actions_menu", return_value="resume"),
+            ):
+                with pytest.raises(InvalidPermissionGrant):
+                    conv._session_menu(startup=False)
+
+            assert conv._controller.active.id == current_id
+            conv._controller.close()
+
+    def test_rename_action_has_distinct_shortcut(self):
+        """Rename 使用 n，不能与 Resume 的 r 冲突。"""
+        from agent import ui
+
+        with patch("builtins.input", return_value="n"):
+            assert ui.show_actions_menu() == "rename"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -302,7 +364,7 @@ class TestTodoWriteCrossTurn:
 class TestConversationIntegration:
     """Conversation 与真实 Agent 子类的集成。"""
 
-    def test_with_real_agent_class(self):
+    def test_with_real_agent_class(self, tmp_path):
         """使用真实的 Agent 类（mock LLM）。"""
         mock_llm = MagicMock()
         mock_response = MagicMock()
@@ -320,7 +382,7 @@ class TestConversationIntegration:
         executor._registry = ToolRegistry()
 
         agent = Agent(mock_llm, executor, system_prompt="You are helpful.", max_steps=5)
-        conv = Conversation(agent)
+        conv = _make_conversation(agent, tmp_path)
 
         with patch("builtins.input", side_effect=["Hello", "/exit"]):
             conv.start()

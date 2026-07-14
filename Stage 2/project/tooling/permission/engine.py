@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .policy import PermissionRule, RuleBehavior
-from .exceptions import NonPersistablePermission, InvalidPermissionGrant, InvalidPermissionRule
+from .exceptions import NonPersistablePermission, InvalidPermissionGrant
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class PermissionEngine:
         for rule in self._policy_rules:
             key = (rule.tool_name, rule.rule_content)
             if key in self._policy_rules_by_key:
-                raise InvalidPermissionRule(
+                raise ValueError(
                     f"策略规则自然键重复: tool_name={rule.tool_name!r}, "
                     f"rule_content={rule.rule_content!r}"
                 )
@@ -100,7 +100,7 @@ class PermissionEngine:
         Raises:
             ValueError: behavior 不是 ASK
             NonPersistablePermission: matched_rule 为 None (fallback ASK)
-            InvalidPermissionRule: rule_id 缺失或规则不属于当前 engine
+            ValueError: rule_id 缺失或规则不属于当前 engine
 
         Returns:
             PermissionGrant(tool_name, rule_content)
@@ -117,14 +117,14 @@ class PermissionEngine:
             )
 
         if not source.rule_id:
-            raise InvalidPermissionRule(
+            raise ValueError(
                 "可持久化的 ASK 规则必须具有稳定 rule_id"
             )
 
         # 防止传入其他 engine 或已经失效的规则
         registered = self._policy_rules_by_id.get(source.rule_id)
         if registered is not source:
-            raise InvalidPermissionRule(
+            raise ValueError(
                 f"规则不属于当前 PermissionEngine: {source.rule_id}"
             )
 

@@ -188,6 +188,18 @@ class TestPrintUtils:
         assert "bash" in output
         assert "🔧" not in output  # 不使用主 Agent 图标
 
+    def test_normalize_message_filters_extra_dict_fields(self):
+        """dict 输入也必须收敛到统一的四字段契约。"""
+        from agent.utils import normalize_message
+
+        normalized = normalize_message({
+            "role": "assistant",
+            "content": "ok",
+            "unexpected": "must not leak",
+        })
+
+        assert normalized == {"role": "assistant", "content": "ok"}
+
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 2: SubAgent 子类 (T005)

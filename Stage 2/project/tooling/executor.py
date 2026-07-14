@@ -161,6 +161,11 @@ class ToolExecutor:
                 return {"error": f"用户拒绝了工具调用: {tool_name}。原因: {reason}"}
             return {"error": f"用户拒绝了工具调用: {tool_name}"}
 
+        if choice not in ("allow", "session"):
+            return {
+                "error": f"无效的权限审批结果: {choice!r}"
+            }
+
         if choice == "session":
             try:
                 self._permission_engine.allow_for_session(result)
@@ -168,5 +173,5 @@ class ToolExecutor:
                 # fallback ASK → 降级为单次 allow
                 pass
 
-        # choice == "allow" 或其他 → 单次放行
+        # choice == "allow" → 单次放行
         return None
