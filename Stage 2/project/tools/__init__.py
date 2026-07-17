@@ -5,6 +5,7 @@ from pathlib import Path
 from tooling.executor import ToolExecutor
 from tools.calculator import CalculatorTool
 from tools.get_time import GetTimeTool
+from tools.memory_write import MemoryWriteTool
 from tools.read_chunk import ReadChunkTool
 from tools.read_file import ReadFileTool
 from tools.search_knowledge import SearchKnowledgeTool
@@ -23,6 +24,7 @@ def register_all(
     include_dangerous: bool = True,
     workdir: str | Path | None = None,
     llm=None,
+    memory_service=None,
 ) -> None:
     """将所有内置工具注册到 executor。
 
@@ -31,6 +33,7 @@ def register_all(
         include_dangerous: 是否注册 destructive/sensitive 工具
         workdir: 工作区根目录（bash 的执行目录、文件工具的路径基准）
         llm: LLMClient 实例（TaskTool 需要，可选）
+        memory_service: MemoryService 实例（MemoryWriteTool 需要，可选）
     """
     executor.register(TodoWriteTool())
     executor.register(TaskTool(llm=llm, executor=executor))
@@ -42,6 +45,9 @@ def register_all(
     executor.register(SearchKnowledgeTool())
     executor.register(WebFetchTool())
     executor.register(WebSearchTool())
+
+    if memory_service is not None:
+        executor.register(MemoryWriteTool(memory_service))
 
     if include_dangerous:
         executor.register(BashTool(workdir=workdir))

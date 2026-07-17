@@ -46,6 +46,19 @@ SYSTEM_PROMPT = """\
 4. 重复以上过程直到所有步骤完成
 
 始终确保当前只有一个步骤处于 in_progress 状态。
+
+## 长期 Memory
+你可以使用 memory_write 保存跨会话仍有价值的信息。
+
+应该保存：
+- 用户明确要求记住的内容
+- 稳定的用户偏好
+- 未来工作中应持续遵守的反馈
+- 已确认的重要项目事实或架构决策
+
+不要保存普通问答、临时格式要求、当前 Todo、执行状态、未确认推测、未完成计划、原始工具输出或任何凭据。
+新概念只使用 add；只有同名 Memory 已存在且新内容应完全替换旧内容时才使用 update。
+update 必须提供完整的 memory_type、description 和 body。不确定时不要调用 memory_write。
 """
 
 SUB_SYSTEM_PROMPT = """\

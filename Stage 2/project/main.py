@@ -17,6 +17,7 @@ from agent.agent import Agent
 from agent.conversation import Conversation
 from agent.session_manager import SessionManager
 from config import llm as llm_cfg, WORKDIR
+from memory import create_memory_service
 from agent.prompts import SYSTEM_PROMPT
 from tools import register_all
 
@@ -28,10 +29,19 @@ if __name__ == "__main__":
     # 1. 创建 LLM 客户端
     llm = LLMClient(llm_cfg.api_key, llm_cfg.base_url, llm_cfg.model)
 
+    # Memory 是项目级服务，由工厂函数装配，register_all() 需要它来注册 memory_write。
+    memory_service = create_memory_service()
+
     # 2. 创建权限引擎 + 工具执行器
     engine = create_engine(project_root=WORKDIR, default_behavior="ask")
     executor = ToolExecutor(permission_engine=engine, approver=terminal_approver)
-    register_all(executor, include_dangerous=True, workdir=WORKDIR, llm=llm)
+    register_all(
+        executor,
+        include_dangerous=True,
+        workdir=WORKDIR,
+        llm=llm,
+        memory_service=memory_service,
+    )
 
     # 3. 创建 SessionManager
     sessions_dir = os.path.join(WORKDIR, ".myagent", "sessions")
@@ -46,6 +56,7 @@ if __name__ == "__main__":
         session_manager=session_mgr,
         permission_engine=engine,
         system_message={"role": "system", "content": SYSTEM_PROMPT},
+        memory_service=memory_service,
     )
 
     # 6. 启动

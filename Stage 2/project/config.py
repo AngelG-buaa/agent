@@ -47,6 +47,19 @@ class RAGConfig:
     qdrant_collection: str = "rag_documents"      # Qdrant 集合名称
 
 
+@dataclass(frozen=True)
+class MemoryConfig:
+    """Project-level long-term Memory settings."""
+
+    memory_dir: str
+    semantic_threshold: float = 0.35
+    lexical_threshold: float = 0.25
+    recall_top_k: int = 3
+    rrf_k: int = 60
+    max_context_chars: int = 12_000
+    max_record_chars: int = 4_000
+
+
 llm = LLMConfig(
     api_key=_require_env("DASHSCOPE_API_KEY"),
     base_url="https://ws-3nvfaye9ft7tkruh.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
@@ -68,6 +81,10 @@ rag = RAGConfig(
     store_backend="faiss",
     qdrant_url="http://localhost:6333",
     qdrant_collection = "rag_documents",
+)
+
+memory = MemoryConfig(
+    memory_dir=os.path.join(_PROJECT_ROOT, ".myagent", "memory"),
 )
 
 

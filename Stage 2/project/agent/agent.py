@@ -35,6 +35,28 @@ def _emit_message(
         messages.append(msg)   # 默认：仅内存追加
 
 
+def build_request_messages(
+    messages: list[dict],
+    request_context: str | None,
+) -> list[dict]:
+    """Build one LLM request without mutating the persisted working context."""
+    request_messages = list(messages)
+    if not request_context:
+        return request_messages
+
+    if request_messages and request_messages[0].get("role") == "system":
+        system_message = dict(request_messages[0])
+        system_content = system_message.get("content") or ""
+        system_message["content"] = f"{system_content}\n\n{request_context}"
+        request_messages[0] = system_message
+    else:
+        request_messages.insert(
+            0,
+            {"role": "system", "content": request_context},
+        )
+    return request_messages
+
+
 class Agent:
     """最小 Agent：接收用户输入，循环调用 LLM + 工具，返回最终答案。"""
 
@@ -53,6 +75,7 @@ class Agent:
         self,
         messages: list[dict],
         on_message: Callable[[dict], None] | None = None,
+        request_context: str | None = None,
     ) -> str:
         """核心循环：Think → Act → Observe。
 
@@ -62,6 +85,7 @@ class Agent:
                         None → 使用默认 messages.append。
                         主 Agent 由 SessionController 注入；
                         SubAgent 永远不传入（使用默认 append）。
+            request_context: 仅叠加到本次 LLM 请求的临时上下文。
 
         循环体会原地修改 messages（通过 on_message 或默认 append）。
         """
@@ -79,7 +103,8 @@ class Agent:
                 schemas = [s for s in schemas
                            if s["function"]["name"] not in self.tool_filter]
 
-            stop_reason, msg = self.llm.chat(messages, schemas)
+            request_messages = build_request_messages(messages, request_context)
+            stop_reason, msg = self.llm.chat(request_messages, schemas)
             # sleep(30)
 
             if stop_reason == "tool_calls":
@@ -150,7 +175,7 @@ class SubAgent(Agent):
             executor=executor,
             system_prompt=SUB_SYSTEM_PROMPT,
             max_steps=30,
-            tool_filter={"task", "todo_write"},
+            tool_filter={"task", "todo_write", "memory_write"},
             print_handler=sub_print_handler,
         )
         self._round = 0

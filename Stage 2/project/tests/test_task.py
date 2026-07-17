@@ -217,7 +217,7 @@ class TestSubAgentConstruction:
     def test_subagent_has_correct_tool_filter(self, mock_llm, mock_executor):
         from agent.agent import SubAgent
         sub = SubAgent(mock_llm, mock_executor)
-        assert sub.tool_filter == {"task", "todo_write"}
+        assert sub.tool_filter == {"task", "todo_write", "memory_write"}
 
     def test_subagent_has_sub_system_prompt(self, mock_llm, mock_executor):
         from agent.agent import SubAgent

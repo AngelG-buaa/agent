@@ -31,7 +31,7 @@
 
 from rag.chunk_info import ChunkInfo
 from rag.chunker import Chunker
-from rag.embedder import Embedder
+from embedding import Embedder
 from rag.vector_store_base import VectorStoreBase
 from rag.faiss_store import FaissVectorStore, VectorStore  # VectorStore = 向后兼容别名
 from rag.indexer import Indexer

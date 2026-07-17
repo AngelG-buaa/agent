@@ -13,10 +13,10 @@ from tooling.permission.exceptions import InvalidPermissionGrant
 
 
 class Conversation:
-    """Conversation 是终端交互适配器，只负责输入、输出和命令。
+    """Conversation 是终端交互与单轮用例的编排边界。
 
-    它通过 SessionController 操作当前会话，不持有 messages，
-    也不直接处理 SQLite、权限和 Todo 的持久化。
+    它通过 SessionController 操作当前会话，并在普通 user turn 调用
+    Memory recall；不持有 messages，也不实现持久化或检索规则。
     """
 
     def __init__(
@@ -25,8 +25,10 @@ class Conversation:
         session_manager,
         permission_engine,
         system_message: dict,
+        memory_service,
     ):
         self.agent = agent
+        self._memory_service = memory_service
         self._interrupted_once = False
 
         self._controller = SessionController(session_manager, permission_engine, system_message)
@@ -105,10 +107,20 @@ class Conversation:
             "content": user_input,
         })
 
-        # Agent.run 的消息出口由 Controller 注入
+        request_context = None
+        try:
+            recall = self._memory_service.recall(user_input)
+            request_context = recall.request_context
+            for warning in recall.warnings:
+                print(f"⚠️  Memory: {warning}")
+        except Exception as exc:
+            print(f"⚠️  Memory recall failed: {exc}")
+
+        # Agent.run 的消息出口由 Controller 注入；Memory 只进入临时 request。
         answer = self.agent.run(
             self._controller.active.messages,
             on_message=self._controller.append_message,
+            request_context=request_context,
         )
 
         print(f"\n🤖 Agent: {answer}\n")

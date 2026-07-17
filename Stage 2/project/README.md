@@ -14,22 +14,23 @@
 | 004 | [specs/004-interactive-conversation/](specs/004-interactive-conversation/) | 交互式对话——多轮 REPL 对话 + Agent 反问工具 |
 | 006 | [specs/006-permission-refactor/](specs/006-permission-refactor/) | 权限重构——实例级权限门禁 + PermissionGrant 值对象 + listener 机制 |
 | 007 | [specs/007-session-persistence/](specs/007-session-persistence/) | Session 持久化——Conversation→SessionController→SessionManager 三层 + `--resume` + `/resume` |
+| Memory | [docs/memory-architecture.md](docs/memory-architecture.md) | 项目级长期记忆——自动混合召回、临时上下文注入、显式 add/update 写入 |
 
-每个迭代遵循 [Spec Kit](.specify/) 流程：Specify → Clarify → Plan → Tasks → Implement → Analyze。
+001-007 迭代遵循 [Spec Kit](.specify/) 流程：Specify → Clarify → Plan → Tasks → Implement → Analyze。Memory 按项目 Constitution 的 Core Principles 完成架构设计与实现。
 
 ## 目录结构
 
 ```
 Stage 2/project/
 ├── main.py                  # Composition Root：解析参数、组装依赖、启动 Conversation
-├── config.py                # 集中配置（LLM API、Embedding、RAG、Workdir）
+├── config.py                # 集中配置（LLM API、Embedding、RAG、Memory、Workdir）
 ├── hooks.py                 # Hook 事件系统（register_hook / trigger_hooks）
 ├── README.md                # ← 你正在看的这个文件
 │
 ├── agent/                   # Agent 层：核心循环 + 提示词 + 工具函数 + 压缩管线
 │   ├── agent.py             # Agent 类 (Think→Act→Observe) + SubAgent(Agent) 子类
 │   ├── compact.py           # 四层上下文压缩管线 (L3→L1→L2→L4)
-│   ├── conversation.py      # REPL、命令解析和统一 session 菜单
+│   ├── conversation.py      # REPL、命令解析、session 菜单和每轮 Memory Recall
 │   ├── llm_client.py        # LLMClient：OpenAI 兼容 API 封装
 │   ├── prompts.py           # SYSTEM_PROMPT + SUB_SYSTEM_PROMPT
 │   ├── session_controller.py # active session 生命周期和消息持久化出口
@@ -37,8 +38,9 @@ Stage 2/project/
 │   ├── ui.py                # session 列表、操作菜单和终端输入
 │   └── utils.py             # 消息归一化、访问器和打印回调
 │
-├── tools/                   # 工具层：12 个内置工具
+├── tools/                   # 工具层：内置工具
 │   ├── __init__.py          # register_all() — 统一注册入口
+│   ├── memory_write.py      # MemoryWriteTool — 显式 add/update 长期记忆
 │   ├── task.py              # TaskTool + spawn_subagent() — 子任务委派
 │   ├── todo_write.py        # TodoWriteTool + 提醒 hooks — 任务规划
 │   ├── bash.py              # Bash 命令执行
@@ -61,11 +63,19 @@ Stage 2/project/
 │       ├── policy.py        # RuleSource → 内置安全策略（19 条规则）
 │       └── exceptions.py    # PermissionArchitectureError → 权限异常类型
 │
+├── embedding/               # RAG 与 Memory 共用的 OpenAI-compatible Embedder
+│   └── client.py            # 文档批量编码 + 查询编码
+│
+├── memory/                  # 项目级长期记忆
+│   ├── models.py            # MemoryRecord/Change/Match/Recall 数据契约
+│   ├── store.py             # Markdown 真源 + MEMORY.md 派生索引
+│   ├── retriever.py         # Semantic + lexical + RRF 混合召回
+│   └── service.py           # Recall 上下文和 add/update 领域规则
+│
 ├── rag/                     # RAG 子系统（离线 ingest + 在线检索）
 │   ├── factory.py           # 单例工厂
 │   ├── parser.py            # 文件解析（TXT/PDF/代码）
 │   ├── chunker.py           # 句级分块 + token 预算合并
-│   ├── embedder.py          # BGE-M3 向量编码
 │   ├── vector_store_base.py # 向量存储抽象接口
 │   ├── faiss_store.py       # FAISS 实现
 │   ├── qdrant_store.py      # Qdrant 实现
@@ -80,11 +90,14 @@ Stage 2/project/
 │   ├── test_permission_engine.py # 权限评估和 grant
 │   ├── test_session_manager.py # SQLite Repository
 │   ├── test_session_persistence.py # 主消息持久化链路
+│   ├── test_memory.py       # Memory Store/Retriever/Service/Tool
+│   ├── test_memory_integration.py # 临时注入和 Conversation Recall
 │   ├── test_todo_write.py   # TodoWrite 相关
 │   └── test_task.py         # SubAgent + Task + Agent 扩展
 │
 ├── docs/                    # 设计文档
 │   ├── architecture-philosophy.md  # 架构原则（从 Claude Code 源码提炼）
+│   ├── memory-architecture.md      # Memory 架构与实现规格
 │   ├── anti-patterns.md            # 开发中的反模式记录
 │   └── TECH_DEBT.md                # 技术债追踪
 │
@@ -115,24 +128,27 @@ for _ in range(self.max_steps):
     # ② Compact: 四层渐进式上下文压缩
     compact_pipeline(messages, self.llm)
 
-    # ③ Think: LLM 调用
-    stop_reason, msg = self.llm.chat(messages, schemas)
+    # ③ 构造本轮临时请求（Memory context 不写回 messages）
+    request_messages = build_request_messages(messages, request_context)
 
-    # ④ Act: 执行工具调用
+    # ④ Think: LLM 调用
+    stop_reason, msg = self.llm.chat(request_messages, schemas)
+
+    # ⑤ Act: 执行工具调用
     if stop_reason == "tool_calls":
         _emit_message(normalize_message(msg), messages, on_message)
         self._execute_tool_calls(msg.tool_calls, messages, on_message)
 
-    # ⑤ PostRound hook（副作用跟踪）
+    # ⑥ PostRound hook（副作用跟踪）
     self._trigger_hook("PostRound", stop_reason, tool_calls)
 
-    # ⑥ Observe: 判断终止
+    # ⑦ Observe: 判断终止
     if stop_reason != "tool_calls":
         _emit_message(normalize_message(msg), messages, on_message)
         return msg.content
 ```
 
-**核心原则（Constitution IX）**：循环体不随功能迭代增长。新能力通过构造参数（`tool_filter`、`print_handler`）或子类覆盖（`SubAgent._execute_tool_calls()`）注入。
+**核心原则（Constitution IX）**：循环体不随功能迭代增长。新能力通过构造参数（`tool_filter`、`print_handler`）、可选请求上下文（`request_context`）或子类覆盖（`SubAgent._execute_tool_calls()`）接入。
 
 ### 工具系统
 
@@ -173,9 +189,17 @@ main.py
       → SessionManager（SQLite 事务和 CRUD）
 ```
 
-`Conversation` 构造时必须注入 `SessionManager`、`PermissionEngine` 和真实 system message。主会话消息采用单一 sink：Controller 先写 SQLite，成功后再追加到 working context。SubAgent 继续使用自己的局部 messages，不接收主 Controller 的消息出口。
+`Conversation` 构造时必须注入 `SessionManager`、`PermissionEngine`、`MemoryService` 和真实 system message。主会话消息采用单一 sink：Controller 先写 SQLite，成功后再追加到 working context。SubAgent 继续使用自己的局部 messages，不接收主 Controller 的消息出口。
 
 每个 session 使用独立的 `.db` 文件，保存 system/user/assistant/tool 消息、PermissionGrant 和 Todo。`--resume` 在启动时恢复，REPL 内输入 `/resume` 可切换、重命名或删除历史 session。
+
+### Memory
+
+Memory 是当前项目内跨 Session 共享的长期记忆，持久化在 `.myagent/memory/items/<name>.md`；`name` 同时是唯一主键和文件名，创建后不可修改。`MEMORY.md` 是可重建的人类可读索引，单条 Markdown 文件才是事实真源。
+
+每个普通 user turn 由 `Conversation` 调用一次 `MemoryService.recall(user_input)`。Retriever 分别执行 semantic 和 lexical 召回，对候选并集使用 RRF 排序并最多返回 3 条；Embedding 失败时降级为纯 lexical。召回内容在 compact 后通过 `request_context` 临时加入 system message，不进入 Session messages、SQLite 或 compact。
+
+长期信息由主 Agent 按需调用 `memory_write`，只支持显式 `add` 和完整 `update`，不执行 upsert。SubAgent 不自动 Recall，并隐藏 `memory_write`。
 
 ### Context Compact（上下文压缩）
 
@@ -206,7 +230,7 @@ main.py
 |------|---------|----------|
 | `max_steps` | 50 | 30 |
 | `system_prompt` | SYSTEM_PROMPT | SUB_SYSTEM_PROMPT |
-| `tool_filter` | None | `{"task", "todo_write"}` |
+| `tool_filter` | None | `{"task", "todo_write", "memory_write"}` |
 | `print_handler` | `default_print_handler` | `sub_print_handler` |
 | `_round` 跟踪 | 无 | 有（第 30 轮注入提醒） |
 
@@ -240,6 +264,7 @@ D:/Miniconda/envs/llm/python -m pytest tests/ -q
 | [docs/architecture-philosophy.md](docs/architecture-philosophy.md) | 架构设计哲学（从 Claude Code 提炼） |
 | [docs/anti-patterns.md](docs/anti-patterns.md) | 开发中踩过的坑 |
 | [docs/TECH_DEBT.md](docs/TECH_DEBT.md) | 技术债追踪（触发条件 + 方案） |
+| [docs/memory-architecture.md](docs/memory-architecture.md) | Memory 架构与实现规格 |
 | [specs/001-todo-write-tool/](specs/001-todo-write-tool/) | 迭代 1：TodoWrite |
 | [specs/002-task-subagent-tool/](specs/002-task-subagent-tool/) | 迭代 2：SubAgent |
 | [specs/003-context-compact/](specs/003-context-compact/) | 迭代 3：Context Compact |
@@ -251,7 +276,7 @@ D:/Miniconda/envs/llm/python -m pytest tests/ -q
 
 - **语言**: Python 3.12+
 - **LLM**: DeepSeek V4 Pro（华为云 ModelArts MaaS），OpenAI 兼容 API
-- **Embedding**: BGE-M3（华为云）
+- **Embedding**: OpenAI-compatible 共享 Embedder（RAG / Memory）
 - **测试**: pytest
 - **向量存储**: FAISS / Qdrant
 - **流程**: Spec Kit（specify → clarify → plan → tasks → implement → analyze）

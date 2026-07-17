@@ -2,6 +2,7 @@
 
 import pytest
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from agent.agent import Agent
@@ -14,9 +15,16 @@ class _FakeAgent:
     def __init__(self, system_prompt="test system prompt"):
         self.system_prompt = system_prompt
         self.call_history: list[list[dict]] = []
+        self.request_contexts: list[str | None] = []
 
-    def run(self, messages: list[dict], on_message=None) -> str:
+    def run(
+        self,
+        messages: list[dict],
+        on_message=None,
+        request_context=None,
+    ) -> str:
         self.call_history.append(list(messages))  # 拷贝快照
+        self.request_contexts.append(request_context)
         # 模拟真实 Agent：使用 on_message sink 追加 assistant 回复
         msg = {"role": "assistant", "content": "Mock response"}
         if on_message is not None:
@@ -47,6 +55,11 @@ def _make_conversation(agent, sessions_dir):
         session_manager=SessionManager(str(sessions_dir)),
         permission_engine=PermissionEngine(default_behavior="allow"),
         system_message={"role": "system", "content": agent.system_prompt},
+        memory_service=MagicMock(
+            recall=MagicMock(
+                return_value=SimpleNamespace(request_context=None, warnings=())
+            )
+        ),
     )
 
 
@@ -161,11 +174,15 @@ class TestKeyboardInterrupt:
 
         call_count = [0]
 
-        def run_with_interrupt(messages, on_message=None):
+        def run_with_interrupt(messages, on_message=None, request_context=None):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise KeyboardInterrupt
-            return original_run(messages, on_message=on_message)
+            return original_run(
+                messages,
+                on_message=on_message,
+                request_context=request_context,
+            )
 
         mock_agent.run = run_with_interrupt
 
@@ -179,7 +196,7 @@ class TestKeyboardInterrupt:
         """连续两次 Ctrl+C → 退出。"""
         original_run = mock_agent.run
 
-        def run_always_interrupt(messages, on_message=None):
+        def run_always_interrupt(messages, on_message=None, request_context=None):
             raise KeyboardInterrupt
 
         mock_agent.run = run_always_interrupt
@@ -197,7 +214,7 @@ class TestApiError:
     def test_api_error_does_not_crash(self, conv, mock_agent):
         """API 异常不应导致 REPL 崩溃。"""
 
-        def run_with_error(messages):
+        def run_with_error(messages, on_message=None, request_context=None):
             raise RuntimeError("API rate limit exceeded")
 
         mock_agent.run = run_with_error
@@ -226,6 +243,11 @@ class TestSessionMenu:
                 session_manager=manager,
                 permission_engine=engine,
                 system_message={"role": "system", "content": "system"},
+                memory_service=MagicMock(
+                    recall=MagicMock(
+                        return_value=SimpleNamespace(request_context=None, warnings=())
+                    )
+                ),
             )
             current_id = conv._controller.start_new().id
             target_id = manager.create_session({"role": "system", "content": "system"})
