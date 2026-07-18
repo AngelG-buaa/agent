@@ -1,22 +1,4 @@
-# myAgent — 最小化 LLM Agent 系统
-
-实习项目。希望通过这个项目找到大厂的有含金量的 Agent 实习岗位。
-
-## 项目背景
-
-这是 [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) 教程的实践项目，通过阅读 Claude Code 源码理解 Agent 架构，然后从零实现一个简化版。项目经历了多轮迭代：
-
-| 迭代 | Spec | 内容 |
-|------|------|------|
-| 001 | [specs/001-todo-write-tool/](specs/001-todo-write-tool/) | 加入 TodoWrite 工具——Agent 在执行复杂任务前规划步骤、跟踪进度 |
-| 002 | [specs/002-task-subagent-tool/](specs/002-task-subagent-tool/) | 加入 Task 工具 + SubAgent 子类——上下文隔离、子任务委派 |
-| 003 | [specs/003-context-compact/](specs/003-context-compact/) | Context Compact——四层渐进式压缩管线，防止长对话上下文溢出 |
-| 004 | [specs/004-interactive-conversation/](specs/004-interactive-conversation/) | 交互式对话——多轮 REPL 对话 + Agent 反问工具 |
-| 006 | [specs/006-permission-refactor/](specs/006-permission-refactor/) | 权限重构——实例级权限门禁 + PermissionGrant 值对象 + listener 机制 |
-| 007 | [specs/007-session-persistence/](specs/007-session-persistence/) | Session 持久化——Conversation→SessionController→SessionManager 三层 + `--resume` + `/resume` |
-| Memory | [docs/memory-architecture.md](docs/memory-architecture.md) | 项目级长期记忆——自动混合召回、临时上下文注入、显式 add/update 写入 |
-
-001-007 迭代遵循 [Spec Kit](.specify/) 流程：Specify → Clarify → Plan → Tasks → Implement → Analyze。Memory 按项目 Constitution 的 Core Principles 完成架构设计与实现。
+# myAgent — LLM Agent 个人学习项目
 
 ## 目录结构
 
@@ -72,47 +54,17 @@ Stage 2/project/
 │   ├── retriever.py         # Semantic + lexical + RRF 混合召回
 │   └── service.py           # Recall 上下文和 add/update 领域规则
 │
-├── rag/                     # RAG 子系统（离线 ingest + 在线检索）
-│   ├── factory.py           # 单例工厂
-│   ├── parser.py            # 文件解析（TXT/PDF/代码）
-│   ├── chunker.py           # 句级分块 + token 预算合并
-│   ├── vector_store_base.py # 向量存储抽象接口
-│   ├── faiss_store.py       # FAISS 实现
-│   ├── qdrant_store.py      # Qdrant 实现
-│   ├── indexer.py           # 索引编排：parse→chunk→embed→store
-│   ├── retriever.py         # 检索编排：encode→search→fetch chunks
-│   ├── chunk_info.py        # ChunkInfo 数据模型
-│   └── prompts.py           # 引用格式规则
-│
-├── tests/                   # 测试
-│   ├── test_compact.py      # 上下文压缩管线
-│   ├── test_conversation.py # REPL 和 session 菜单
-│   ├── test_permission_engine.py # 权限评估和 grant
-│   ├── test_session_manager.py # SQLite Repository
-│   ├── test_session_persistence.py # 主消息持久化链路
-│   ├── test_memory.py       # Memory Store/Retriever/Service/Tool
-│   ├── test_memory_integration.py # 临时注入和 Conversation Recall
-│   ├── test_todo_write.py   # TodoWrite 相关
-│   └── test_task.py         # SubAgent + Task + Agent 扩展
-│
-├── docs/                    # 设计文档
-│   ├── architecture-philosophy.md  # 架构原则（从 Claude Code 源码提炼）
-│   ├── memory-architecture.md      # Memory 架构与实现规格
-│   ├── anti-patterns.md            # 开发中的反模式记录
-│   └── TECH_DEBT.md                # 技术债追踪
-│
-├── specs/                   # 功能规范（Spec Kit 产物）
-│   ├── 001-todo-write-tool/
-│   ├── 002-task-subagent-tool/
-│   ├── 003-context-compact/
-│   ├── 004-interactive-conversation/
-│   ├── 006-permission-refactor/
-│   └── 007-session-persistence/
-│
-└── .specify/                # Spec Kit 配置
-    ├── memory/constitution.md  # 项目宪章
-    ├── templates/              # spec/plan/tasks 模板
-    └── feature.json            # 当前活跃 feature 指针
+└── rag/                     # RAG 子系统（离线 ingest + 在线检索）
+    ├── factory.py           # 单例工厂
+    ├── parser.py            # 文件解析（TXT/PDF/代码）
+    ├── chunker.py           # 句级分块 + token 预算合并
+    ├── vector_store_base.py # 向量存储抽象接口
+    ├── faiss_store.py       # FAISS 实现
+    ├── qdrant_store.py      # Qdrant 实现
+    ├── indexer.py           # 索引编排：parse→chunk→embed→store
+    ├── retriever.py         # 检索编排：encode→search→fetch chunks
+    ├── chunk_info.py        # ChunkInfo 数据模型
+    └── prompts.py           # 引用格式规则
 ```
 
 ## 核心概念
@@ -235,42 +187,6 @@ Memory 是当前项目内跨 Session 共享的长期记忆，持久化在 `.myag
 | `_round` 跟踪 | 无 | 有（第 30 轮注入提醒） |
 
 通常由 `TaskTool` 调用 `spawn_subagent(description, llm, executor)` 创建。直接使用 `SubAgent` 时，需要自行构造独立的 system/user messages 后调用 `run(messages)`。
-
-## 运行
-
-```bash
-# 激活环境
-D:/Miniconda/envs/llm/python --version  # Python 3.12+
-
-# 运行 Agent（新建 session）
-cd Stage 2/project
-D:/Miniconda/envs/llm/python main.py
-
-# 恢复历史 session（交互式选择 + 删除/重命名）
-D:/Miniconda/envs/llm/python main.py --resume
-
-# REPL 内切换 session
-# 在对话中输入 /resume
-
-# 运行全部测试
-D:/Miniconda/envs/llm/python -m pytest tests/ -q
-```
-
-## 文档索引
-
-| 文档 | 用途 |
-|------|------|
-| [.specify/memory/constitution.md](.specify/memory/constitution.md) | 10 条开发原则（最高准则） |
-| [docs/architecture-philosophy.md](docs/architecture-philosophy.md) | 架构设计哲学（从 Claude Code 提炼） |
-| [docs/anti-patterns.md](docs/anti-patterns.md) | 开发中踩过的坑 |
-| [docs/TECH_DEBT.md](docs/TECH_DEBT.md) | 技术债追踪（触发条件 + 方案） |
-| [docs/memory-architecture.md](docs/memory-architecture.md) | Memory 架构与实现规格 |
-| [specs/001-todo-write-tool/](specs/001-todo-write-tool/) | 迭代 1：TodoWrite |
-| [specs/002-task-subagent-tool/](specs/002-task-subagent-tool/) | 迭代 2：SubAgent |
-| [specs/003-context-compact/](specs/003-context-compact/) | 迭代 3：Context Compact |
-| [specs/004-interactive-conversation/](specs/004-interactive-conversation/) | 迭代 4：交互式对话 |
-| [specs/006-permission-refactor/](specs/006-permission-refactor/) | 迭代 6：权限重构 |
-| [specs/007-session-persistence/](specs/007-session-persistence/) | 迭代 7：Session 持久化 |
 
 ## 技术栈
 

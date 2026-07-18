@@ -55,11 +55,16 @@ AGENTS.md
 
 # ===== mine =====
 claude-code-analysis/
-Stage 1/Claude
-Stage 1/Open AI
-Stage 2/project/rag/data
-Stage 2/project/docs
-Stage 2/RAG
-Stage 2/project/.superpowers
+src/rag/data
+src/docs
+src/.superpowers
 .gitignore
 我的收获
+"Stage 0"
+"Stage 1"
+.claude
+.pytest_cache
+pytest.ini
+.specify
+tests
+specs
