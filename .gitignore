@@ -50,6 +50,9 @@ AGENTS.md
 # ===== myAgent sessions =====
 .myagent/
 
+# ===== pytest temp =====
+*.pytest-tmp/
+
 # ===== mine =====
 claude-code-analysis/
 Stage 1/Claude

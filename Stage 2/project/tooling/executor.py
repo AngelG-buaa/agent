@@ -13,6 +13,12 @@ from tooling.registry import ToolRegistry
 from tooling.permission.engine import PermissionEngine
 from tooling.permission.policy import RuleBehavior
 from tooling.permission.exceptions import NonPersistablePermission
+from terminal.io import (
+    InputReader,
+    OutputWriter,
+    TerminalInputReader,
+    TerminalOutputWriter,
+)
 from hooks import trigger_hooks
 
 
@@ -23,32 +29,41 @@ from hooks import trigger_hooks
 Approver = Callable[[str, dict, str | None], dict]
 
 
-def terminal_approver(tool_name: str, params: dict, reason: str | None) -> dict:
-    """默认终端审批回调 —— 通过 input() 询问用户。
+class TerminalApprover:
+    """默认终端审批回调 —— 通过 InputReader 询问用户。
 
-    返回: {"decision": "allow"|"deny"|"session", "reason"?: str}
-      - "session": 添加会话 ALLOW 规则，本次及后续同操作不再询问
-      - "deny" 时可附带拒绝原因（用户可选输入）
+    可注入 InputReader（测试用 FixedInputReader 或默认 TerminalInputReader）。
+    作为 callable 使用，满足 Approver 签名。
     """
-    print()
-    print(f"  ⚠  权限确认: {reason or '需要用户审批'}")
-    print(f"     工具: {tool_name}({params})")
-    try:
-        choice = input("     [y]允许 [n]拒绝 [a]始终允许? ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return {"decision": "deny"}
-    if choice in ("a", "always"):
-        return {"decision": "session"}
-    if choice in ("y", "yes"):
-        return {"decision": "allow"}
 
-    # 拒绝时可输入原因
-    deny_reason = input("     输入拒绝原因（可选，回车跳过）: ").strip()
-    result: dict = {"decision": "deny"}
-    if deny_reason:
-        result["reason"] = deny_reason
-    return result
+    def __init__(self, input_reader: InputReader | None = None,
+                 output: OutputWriter | None = None):
+        self._input = input_reader or TerminalInputReader()
+        self._output = output or TerminalOutputWriter()
+
+    def __call__(self, tool_name: str, params: dict, reason: str | None) -> dict:
+        """执行审批交互。返回 {"decision": "allow"|"deny"|"session", "reason"?: str}"""
+        self._output.write("")
+        self._output.info(f"权限确认: {reason or '需要用户审批'}")
+        self._output.info(f"工具: {tool_name}({params})")
+        try:
+            choice = self._input.read("     [y]允许 [n]拒绝 [a]始终允许此规则 [t]信任此工具? ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            self._output.write("")
+            return {"decision": "deny"}
+        if choice in ("t", "tool", "trust"):
+            return {"decision": "session_tool"}
+        if choice in ("a", "always"):
+            return {"decision": "session"}
+        if choice in ("y", "yes"):
+            return {"decision": "allow"}
+
+        # 拒绝时可输入原因
+        deny_reason = self._input.read("     输入拒绝原因（可选，回车跳过）: ")
+        result: dict = {"decision": "deny"}
+        if deny_reason:
+            result["reason"] = deny_reason
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -64,7 +79,7 @@ class ToolExecutor:
 
     用法:
         engine = create_engine(project_root=WORKDIR, default_behavior="ask")
-        executor = ToolExecutor(permission_engine=engine, approver=terminal_approver)
+        executor = ToolExecutor(permission_engine=engine, approver=TerminalApprover())
         executor.register(BashTool(...))
         agent = Agent(llm, executor, ...)
     """
@@ -161,7 +176,7 @@ class ToolExecutor:
                 return {"error": f"用户拒绝了工具调用: {tool_name}。原因: {reason}"}
             return {"error": f"用户拒绝了工具调用: {tool_name}"}
 
-        if choice not in ("allow", "session"):
+        if choice not in ("allow", "session", "session_tool"):
             return {
                 "error": f"无效的权限审批结果: {choice!r}"
             }
@@ -172,6 +187,9 @@ class ToolExecutor:
             except NonPersistablePermission:
                 # fallback ASK → 降级为单次 allow
                 pass
+
+        if choice == "session_tool":
+            self._permission_engine.allow_tool_for_session(tool_name)
 
         # choice == "allow" → 单次放行
         return None

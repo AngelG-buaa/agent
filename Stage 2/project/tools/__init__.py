@@ -25,6 +25,7 @@ def register_all(
     workdir: str | Path | None = None,
     llm=None,
     memory_service=None,
+    output=None,
 ) -> None:
     """将所有内置工具注册到 executor。
 
@@ -34,8 +35,9 @@ def register_all(
         workdir: 工作区根目录（bash 的执行目录、文件工具的路径基准）
         llm: LLMClient 实例（TaskTool 需要，可选）
         memory_service: MemoryService 实例（MemoryWriteTool 需要，可选）
+        output: OutputWriter 实例（TodoWriteTool 需要，可选）
     """
-    executor.register(TodoWriteTool())
+    executor.register(TodoWriteTool(output=output))
     executor.register(TaskTool(llm=llm, executor=executor))
     executor.register(AskUserTool())
     executor.register(CalculatorTool())

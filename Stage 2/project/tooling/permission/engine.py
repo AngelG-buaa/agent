@@ -144,6 +144,45 @@ class PermissionEngine:
 
         return grant
 
+    def allow_tool_for_session(self, tool_name: str) -> list[PermissionGrant]:
+        """将指定工具的所有 ASK 策略规则一次性转为 session grant。
+
+        已有 session grant 的规则自动跳过；无 rule_id 的规则（理论上不应存在）跳过。
+        每条新 grant 都会通过 grant_listener 持久化。
+
+        Returns:
+            本次新创建的 grants（可能为空列表）
+        """
+        grants: list[PermissionGrant] = []
+
+        for rule in self._policy_rules:
+            if rule.rule_behavior != RuleBehavior.ASK:
+                continue
+            if rule.tool_name != tool_name:
+                continue
+
+            key = (rule.tool_name, rule.rule_content)
+            if key in self._session_rules:
+                continue
+            if not rule.rule_id:
+                continue
+
+            grant = PermissionGrant(
+                tool_name=rule.tool_name,
+                rule_content=rule.rule_content,
+            )
+
+            session_rule = self._build_session_rule(grant)
+
+            # 先持久化，后安装内存规则
+            if self._grant_listener is not None:
+                self._grant_listener(grant)
+
+            self._session_rules[key] = session_rule
+            grants.append(grant)
+
+        return grants
+
     def replace_session_rules(
         self,
         grants: list[PermissionGrant],

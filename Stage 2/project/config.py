@@ -107,7 +107,7 @@ class CompactionConfig:
     执行顺序: L3 (budget) → L1 (snip) → L2 (micro) → L4 (compact_history)。
     L3 必须在 L2 之前，因为 L2 会替换掉大内容，L3 需要完整内容来判断。
     """
-    context_limit: int = 200_000               # L4 触发阈值（字符数）
+    context_limit: int = 800_000               # L4 触发阈值（字符数）
     max_messages_snip: int = 100               # L1 触发阈值（消息数）
     head_count: int = 3                        # L1 头部保留消息数
     keep_recent_tool_results: int = 5          # L2 保留最新 tool_result 数

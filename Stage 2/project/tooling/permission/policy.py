@@ -82,10 +82,19 @@ def _path_contains_any(segments: list[str]) -> Callable[[str, dict], bool]:
 
 
 def _cmd_starts_with_any(prefixes: list[str]) -> Callable[[str, dict], bool]:
-    """命令以任一前缀开头即匹配。'ls' 匹配 'ls' 和 'ls -la'，'git status' 匹配 'git status --short'。"""
+    """命令（或 && || ; | 分隔的任一段）以任一前缀开头即匹配。
+
+    'ls -la' 匹配 'ls'，'git status --short' 匹配 'git status'，
+    'cd "..." && git diff file.py' 的 'git diff file.py' 段也匹配 'git diff'。
+    """
     def condition(_tool_name: str, params: dict) -> bool:
         command = params.get("command", "").strip().lower()
-        return any(command == pfx or command.startswith(pfx + " ") for pfx in prefixes)
+        segments = re.split(r'\s*(?:&&|\|\||[;|])\s*', command)
+        for seg in segments:
+            seg = seg.strip()
+            if any(seg == pfx or seg.startswith(pfx + " ") for pfx in prefixes):
+                return True
+        return False
     return condition
 
 

@@ -12,6 +12,7 @@
 """
 
 from tooling.base import Tool, ToolParameter
+from terminal.io import OutputWriter, TerminalOutputWriter
 
 # 全局任务列表，进程内存存储，每次 todo_write 调用整体替换
 CURRENT_TODOS: list[dict] = []
@@ -34,13 +35,14 @@ class TodoWriteTool(Tool):
     它的唯一目的是让 Agent 在执行复杂任务前组织思路、跟踪进度。
     """
 
-    def __init__(self):
+    def __init__(self, output: OutputWriter | None = None):
         super().__init__(
             name="todo_write",
             description=(
             "为当前编码会话创建和管理结构化任务列表，帮助跟踪进度、组织复杂任务。此工具仅维护列表，不执行实际操作。"
             ),
         )
+        self._output = output or TerminalOutputWriter()
 
     def get_parameters(self) -> list[ToolParameter]:
         return [
@@ -90,8 +92,7 @@ class TodoWriteTool(Tool):
 
         return {"result": f"Updated {len(CURRENT_TODOS)} tasks"}
 
-    @staticmethod
-    def _print_todos() -> None:
+    def _print_todos(self) -> None:
         """在终端打印当前任务列表，带状态图标。"""
         lines = ["\n## Current Tasks"]
         if not CURRENT_TODOS:
@@ -100,7 +101,7 @@ class TodoWriteTool(Tool):
             for t in CURRENT_TODOS:
                 icon = STATUS_ICONS.get(t.get("status", "pending"), " ")
                 lines.append(f"  [{icon}] {t.get('content', '')}")
-        print("\n".join(lines))
+        self._output.info("\n".join(lines))
 
 
 # ═══════════════════════════════════════════════════════════════

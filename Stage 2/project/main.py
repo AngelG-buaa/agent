@@ -12,7 +12,7 @@ import os
 
 from agent.llm_client import LLMClient
 from tooling.permission import create_engine
-from tooling.executor import ToolExecutor, terminal_approver
+from tooling.executor import ToolExecutor, TerminalApprover
 from agent.agent import Agent
 from agent.conversation import Conversation
 from agent.session_manager import SessionManager
@@ -20,11 +20,15 @@ from config import llm as llm_cfg, WORKDIR
 from memory import create_memory_service
 from agent.prompts import SYSTEM_PROMPT
 from tools import register_all
+from terminal.io import IOBackend
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="myAgent — LLM Agent")
     parser.add_argument("--resume", action="store_true", help="恢复历史 session")
     args = parser.parse_args()
+
+    # 0. 创建 IOBackend（所有输出的统一网关）
+    io = IOBackend.terminal()
 
     # 1. 创建 LLM 客户端
     llm = LLMClient(llm_cfg.api_key, llm_cfg.base_url, llm_cfg.model)
@@ -33,14 +37,15 @@ if __name__ == "__main__":
     memory_service = create_memory_service()
 
     # 2. 创建权限引擎 + 工具执行器
-    engine = create_engine(project_root=WORKDIR, default_behavior="ask")
-    executor = ToolExecutor(permission_engine=engine, approver=terminal_approver)
+    engine = create_engine(project_root=WORKDIR, default_behavior="allow")
+    executor = ToolExecutor(permission_engine=engine, approver=TerminalApprover(input_reader=io.input, output=io.output))
     register_all(
         executor,
         include_dangerous=True,
         workdir=WORKDIR,
         llm=llm,
         memory_service=memory_service,
+        output=io.output,
     )
 
     # 3. 创建 SessionManager
@@ -48,7 +53,8 @@ if __name__ == "__main__":
     session_mgr = SessionManager(sessions_dir=sessions_dir)
 
     # 4. 创建 Agent
-    agent = Agent(llm, executor, system_prompt=SYSTEM_PROMPT, max_steps=50)
+    agent = Agent(llm, executor, system_prompt=SYSTEM_PROMPT, max_steps=100,
+                  io_backend=io)
 
     # 5. 创建 Conversation（注入 SessionManager + PermissionEngine + system_message）
     conv = Conversation(

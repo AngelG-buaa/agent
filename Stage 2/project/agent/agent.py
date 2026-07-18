@@ -6,7 +6,8 @@ from typing import Callable
 
 from agent.llm_client import LLMClient
 from tooling.executor import ToolExecutor
-from agent.utils import default_print_handler, normalize_message
+from terminal.io import IOBackend
+from agent.utils import normalize_message
 from agent.compact import compact_pipeline
 from hooks import trigger_hooks
 
@@ -61,15 +62,15 @@ class Agent:
     """最小 Agent：接收用户输入，循环调用 LLM + 工具，返回最终答案。"""
 
     def __init__(self, llm: LLMClient, executor: ToolExecutor,
-                 system_prompt: str | None = None, max_steps: int = 10,
+                 system_prompt: str | None = None, max_steps: int = 50,
                  tool_filter: set[str] | None = None,
-                 print_handler: Callable | None = None):
+                 io_backend: IOBackend | None = None):
         self.llm = llm
         self.executor = executor
         self.system_prompt = system_prompt
         self.max_steps = max_steps
         self.tool_filter = tool_filter
-        self.print_handler = print_handler or default_print_handler
+        self._io = io_backend or IOBackend()
 
     def run(
         self,
@@ -142,9 +143,10 @@ class Agent:
         for tc in tool_calls:
             name = tc.function.name
             args = json.loads(tc.function.arguments)
-            self.print_handler(name, args)
+            self._io.tool_renderer.on_tool_call(name, args)
 
             result = self.executor.execute(name, args)
+            self._io.tool_renderer.on_tool_result(name, result)
 
             tool_msg = {
                 "role": "tool",
@@ -166,9 +168,9 @@ class SubAgent(Agent):
         result = sub.run("完成某个子任务的描述")
     """
 
-    def __init__(self, llm: LLMClient, executor: ToolExecutor):
+    def __init__(self, llm: LLMClient, executor: ToolExecutor,
+                 io_backend: IOBackend | None = None):
         from agent.prompts import SUB_SYSTEM_PROMPT
-        from agent.utils import sub_print_handler
 
         super().__init__(
             llm=llm,
@@ -176,7 +178,7 @@ class SubAgent(Agent):
             system_prompt=SUB_SYSTEM_PROMPT,
             max_steps=30,
             tool_filter={"task", "todo_write", "memory_write"},
-            print_handler=sub_print_handler,
+            io_backend=io_backend,
         )
         self._round = 0
 

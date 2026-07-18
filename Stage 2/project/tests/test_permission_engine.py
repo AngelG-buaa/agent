@@ -442,3 +442,242 @@ class TestPolicyRuleValidation:
         result = engine.evaluate("bash", {"command": "ls"})
         assert result.behavior == RuleBehavior.DENY
         assert result.matched_rule is None
+
+
+# ═══════════════════════════════════════════════════════════════
+# Tool-Level Trust (allow_tool_for_session)
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestToolLevelTrust:
+    """allow_tool_for_session 将指定工具所有 ASK 规则一次性转为 session grant。"""
+
+    def test_grants_all_ask_rules_for_tool(self):
+        """bash 有 3 条 ASK 规则 → 3 grants；write_file 规则不受影响。"""
+        r1 = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+        r2 = _make_ask_rule("bash", "chmod 777 *", "policy-ask-chmod")
+        r3 = _make_ask_rule("bash", "chown *", "policy-ask-chown")
+        r4 = _make_ask_rule("write_file", "*", "policy-ask-write")
+
+        engine = PermissionEngine(policy_rules=[r1, r2, r3, r4], default_behavior="deny")
+
+        grants = engine.allow_tool_for_session("bash")
+
+        assert len(grants) == 3
+        assert len(engine._session_rules) == 3
+        assert ("bash", "rm *") in engine._session_rules
+        assert ("bash", "chmod 777 *") in engine._session_rules
+        assert ("bash", "chown *") in engine._session_rules
+        assert ("write_file", "*") not in engine._session_rules
+
+        # 后续 bash 调用应放行
+        result = engine.evaluate("bash", {"command": "rm file.txt"})
+        assert result.behavior == RuleBehavior.ALLOW
+
+        # write_file 仍触发 ASK
+        result2 = engine.evaluate("write_file", {"path": "/outside/file.txt"})
+        assert result2.behavior == RuleBehavior.ASK
+
+    def test_idempotent(self):
+        """已有一条 grant 后再 trust，只创建剩余条数。"""
+        r1 = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+        r2 = _make_ask_rule("bash", "chmod *", "policy-ask-chmod")
+
+        engine = PermissionEngine(policy_rules=[r1, r2], default_behavior="deny")
+
+        # 先按 a 授权一条
+        eval_r1 = engine.evaluate("bash", {"command": "rm file.txt"})
+        engine.allow_for_session(eval_r1)
+        assert len(engine._session_rules) == 1
+
+        listeners_called = []
+        engine.set_grant_listener(lambda g: listeners_called.append(g))
+
+        # 再按 t 信任整个工具
+        grants = engine.allow_tool_for_session("bash")
+
+        assert len(grants) == 1  # 只新增 chmod
+        assert len(engine._session_rules) == 2  # rm + chmod
+        assert len(listeners_called) == 1
+        assert listeners_called[0].rule_content == "chmod *"
+
+    def test_deny_unaffected(self):
+        """trust bash 后 DENY 规则仍拒绝。"""
+        deny_rule = PermissionRule(
+            tool_name="bash", rule_behavior=RuleBehavior.DENY,
+            rule_content="sudo *", message="禁止提权",
+            condition=lambda t, p: "sudo" in p.get("command", ""),
+            rule_id="policy-deny-sudo",
+        )
+        ask_rule = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+
+        engine = PermissionEngine(policy_rules=[deny_rule, ask_rule], default_behavior="allow")
+
+        engine.allow_tool_for_session("bash")
+
+        # rm 放行
+        r1 = engine.evaluate("bash", {"command": "rm file.txt"})
+        assert r1.behavior == RuleBehavior.ALLOW
+
+        # sudo 拒绝
+        r2 = engine.evaluate("bash", {"command": "sudo rm -rf /"})
+        assert r2.behavior == RuleBehavior.DENY
+
+    def test_listener_called_per_grant(self):
+        """3 条 ASK 规则 → listener 调用 3 次，参数正确。"""
+        r1 = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+        r2 = _make_ask_rule("bash", "chmod *", "policy-ask-chmod")
+        r3 = _make_ask_rule("bash", "chown *", "policy-ask-chown")
+
+        engine = PermissionEngine(policy_rules=[r1, r2, r3], default_behavior="deny")
+
+        grants_received = []
+        engine.set_grant_listener(lambda g: grants_received.append(g))
+
+        engine.allow_tool_for_session("bash")
+
+        assert len(grants_received) == 3
+        contents = {g.rule_content for g in grants_received}
+        assert contents == {"rm *", "chmod *", "chown *"}
+        assert all(g.tool_name == "bash" for g in grants_received)
+
+    def test_empty_tool(self):
+        """calculator（无 ASK 规则）→ 返回 []。"""
+        ask_rule = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+        engine = PermissionEngine(policy_rules=[ask_rule], default_behavior="deny")
+
+        grants_received = []
+        engine.set_grant_listener(lambda g: grants_received.append(g))
+
+        grants = engine.allow_tool_for_session("write_file")
+
+        assert grants == []
+        assert len(grants_received) == 0
+        assert len(engine._session_rules) == 0
+
+    def test_star_rules_not_included(self):
+        """tool_name='*' 的 ASK 规则不被纳入工具级信任。"""
+        star_rule = PermissionRule(
+            tool_name="*", rule_behavior=RuleBehavior.ASK,
+            rule_content="global *", message="全局确认",
+            condition=lambda t, p: "global" in str(p),
+            rule_id="policy-ask-global",
+        )
+        bash_rule = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+
+        engine = PermissionEngine(policy_rules=[star_rule, bash_rule], default_behavior="deny")
+
+        grants = engine.allow_tool_for_session("bash")
+
+        assert len(grants) == 1
+        assert grants[0].tool_name == "bash"
+        assert grants[0].rule_content == "rm *"
+
+        # bash 自己的规则 → ALLOW
+        r1 = engine.evaluate("bash", {"command": "rm file.txt"})
+        assert r1.behavior == RuleBehavior.ALLOW
+
+        # 全局 * 规则 → 仍然 ASK（未被 trust bash 纳入）
+        r2 = engine.evaluate("bash", {"command": "global cleanup"})
+        assert r2.behavior == RuleBehavior.ASK
+
+    def test_no_policy_rules(self):
+        """空策略 → 返回 []。"""
+        engine = PermissionEngine(default_behavior="ask")
+
+        grants = engine.allow_tool_for_session("bash")
+
+        assert grants == []
+        assert len(engine._session_rules) == 0
+
+    def test_rules_without_rule_id_skipped(self):
+        """rule_id=None 的 ASK 规则跳过。"""
+        rule_no_id = PermissionRule(
+            tool_name="bash", rule_behavior=RuleBehavior.ASK,
+            rule_content="no_id_rule", message="无 rule_id",
+            condition=lambda t, p: "no_id" in str(p),
+            rule_id=None,
+        )
+
+        engine = PermissionEngine(policy_rules=[rule_no_id], default_behavior="deny")
+
+        grants = engine.allow_tool_for_session("bash")
+
+        assert grants == []
+        assert len(engine._session_rules) == 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# Executor-Level Integration Tests (session_tool decision)
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestExecutorSessionTool:
+    """ToolExecutor + session_tool 集成测试。"""
+
+    def test_full_executor_chain_session_tool(self):
+        """trust bash 后第二条 bash 命令不弹窗。"""
+        from tooling.executor import ToolExecutor
+        from unittest.mock import MagicMock
+
+        r1 = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+        r2 = _make_ask_rule("bash", "chmod *", "policy-ask-chmod")
+
+        engine = PermissionEngine(policy_rules=[r1, r2], default_behavior="deny")
+
+        approver = MagicMock()
+        approver.return_value = {"decision": "session_tool"}
+
+        executor = ToolExecutor(permission_engine=engine, approver=approver)
+
+        mock_tool = MagicMock()
+        mock_tool.name = "bash"
+        mock_tool.run.return_value = {"result": "ok"}
+        executor.register(mock_tool)
+
+        # 第一次调用 → 触发 ASK → approver 返回 session_tool
+        result1 = executor.execute("bash", {"command": "rm file.txt"})
+        assert "error" not in result1
+        assert approver.call_count == 1
+
+        # 第二次调用（不同 ASK 规则，但同工具）→ 直接 ALLOW，不弹窗
+        result2 = executor.execute("bash", {"command": "chmod 644 file"})
+        assert "error" not in result2
+        assert approver.call_count == 1  # 未再次调用
+
+    def test_executor_chain_session_tool_isolated(self):
+        """trust bash 后 write_file 仍弹窗。"""
+        from tooling.executor import ToolExecutor
+        from unittest.mock import MagicMock
+
+        bash_rule = _make_ask_rule("bash", "rm *", "policy-ask-rm")
+        write_rule = _make_ask_rule("write_file", "*", "policy-ask-write")
+
+        engine = PermissionEngine(policy_rules=[bash_rule, write_rule], default_behavior="deny")
+
+        approver = MagicMock()
+        approver.return_value = {"decision": "session_tool"}
+
+        executor = ToolExecutor(permission_engine=engine, approver=approver)
+
+        bash_tool = MagicMock()
+        bash_tool.name = "bash"
+        bash_tool.run.return_value = {"result": "ok"}
+        executor.register(bash_tool)
+
+        write_tool = MagicMock()
+        write_tool.name = "write_file"
+        write_tool.run.return_value = {"result": "ok"}
+        executor.register(write_tool)
+
+        # trust bash 工具
+        result1 = executor.execute("bash", {"command": "rm file.txt"})
+        assert "error" not in result1
+        assert approver.call_count == 1
+
+        # write_file 仍未授权 → 弹窗
+        # 第二次 approver 调用返回 allow（因为第二个返回值）
+        approver.return_value = {"decision": "allow"}
+        result2 = executor.execute("write_file", {"path": "/outside/file.txt"})
+        assert "error" not in result2
+        assert approver.call_count == 2  # 再次触发审批

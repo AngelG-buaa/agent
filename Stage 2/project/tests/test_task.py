@@ -1,10 +1,10 @@
-"""SubAgent 和 Agent 扩展（tool_filter、print_handler）的单元测试。
+"""SubAgent 和 Agent 扩展（io_backend、tool_filter）的单元测试。
 
 测试覆盖:
   - Agent: tool_filter 参数 (T003)
-  - Agent: print_handler 参数 (T004)
+  - Agent: io_backend 参数 (T004)
   - SubAgent: 构造配置 + 轮数跟踪 + 提醒注入 (T005)
-  - agent.utils: 打印回调函数
+  - terminal.io: ToolCallRenderer 工具调用渲染
 """
 
 import json
@@ -97,40 +97,38 @@ class TestAgentToolFilter:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Phase 2: Agent print_handler (T004)
+# Phase 2: Agent io_backend (T004)
 # ═══════════════════════════════════════════════════════════════
 
 
 class TestAgentPrintHandler:
-    """测试 Agent 的 print_handler 参数。"""
+    """测试 Agent 的 io_backend 参数。"""
 
-    def test_default_print_handler_format(self):
-        """默认 handler 输出 🔧 调用工具 格式。"""
-        from agent.utils import default_print_handler
-        captured = StringIO()
-        with patch("sys.stdout", captured):
-            default_print_handler("bash", {"command": "ls"})
-        output = captured.getvalue()
-        assert "🔧 调用工具" in output
+    def test_default_handler_format(self):
+        """默认 handler 输出工具调用格式。"""
+        from terminal.io import CaptureOutputWriter, DefaultToolCallRenderer
+        cap = CaptureOutputWriter()
+        renderer = DefaultToolCallRenderer(cap)
+        renderer.on_tool_call("bash", {"command": "ls"})
+        output = "\n".join(cap.lines)
+        assert "工具" in output
         assert "bash" in output
 
-    def test_custom_print_handler_is_used(self, mock_llm, mock_executor):
-        """自定义 print_handler 被 Agent 使用。"""
+    def test_custom_io_backend_is_used(self, mock_llm, mock_executor):
+        """自定义 IOBackend 被 Agent 使用。"""
         from agent.agent import Agent
-        calls = []
+        from terminal.io import IOBackend, CaptureOutputWriter
+        cap = CaptureOutputWriter()
+        io = IOBackend(output=cap)
+        agent = Agent(mock_llm, mock_executor, io_backend=io)
+        assert agent._io is io
 
-        def my_handler(name, args):
-            calls.append((name, args))
-
-        agent = Agent(mock_llm, mock_executor, print_handler=my_handler)
-        assert agent.print_handler is my_handler
-
-    def test_print_handler_falls_back_to_default(self, mock_llm, mock_executor):
-        """未提供 print_handler 时使用默认值。"""
+    def test_io_backend_falls_back_to_default(self, mock_llm, mock_executor):
+        """未提供 io_backend 时使用默认值。"""
         from agent.agent import Agent
-        from agent.utils import default_print_handler
+        from terminal.io import IOBackend
         agent = Agent(mock_llm, mock_executor)
-        assert agent.print_handler is default_print_handler
+        assert isinstance(agent._io, IOBackend)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -138,55 +136,16 @@ class TestAgentPrintHandler:
 # ═══════════════════════════════════════════════════════════════
 
 
-class TestPrintUtils:
-    """测试 agent/utils.py 中的打印工具函数。"""
+class TestIOUtils:
+    """测试 agent/utils.py 中的工具函数。"""
 
-    def test_extract_key_param_bash(self):
-        from agent.utils import _extract_key_param
-        result = _extract_key_param("bash", {"command": "ls -la /home/user"})
-        assert result == "ls -la /home/user"
-
-    def test_extract_key_param_bash_long_truncated(self):
-        from agent.utils import _extract_key_param
-        long_cmd = "x" * 100
-        result = _extract_key_param("bash", {"command": long_cmd})
-        assert len(result) == 63  # 60 chars + "..."
-        assert result.endswith("...")
-
-    def test_extract_key_param_read_file(self):
-        from agent.utils import _extract_key_param
-        result = _extract_key_param("read_file", {"file_path": "/tmp/test.py"})
-        assert result == "/tmp/test.py"
-
-    def test_extract_key_param_write_file(self):
-        from agent.utils import _extract_key_param
-        result = _extract_key_param("write_file", {"file_path": "/tmp/out.py"})
-        assert result == "/tmp/out.py"
-
-    def test_extract_key_param_edit_file(self):
-        from agent.utils import _extract_key_param
-        result = _extract_key_param("edit_file", {"file_path": "/tmp/mod.py"})
-        assert result == "/tmp/mod.py"
-
-    def test_extract_key_param_web_search(self):
-        from agent.utils import _extract_key_param
-        result = _extract_key_param("web_search", {"query": "Python async"})
-        assert "Python async" in result
-
-    def test_extract_key_param_calculator(self):
-        from agent.utils import _extract_key_param
-        result = _extract_key_param("calculator", {"expression": "1+1"})
-        assert result == ""
-
-    def test_sub_print_handler_format(self):
-        from agent.utils import sub_print_handler
-        captured = StringIO()
-        with patch("sys.stdout", captured):
-            sub_print_handler("bash", {"command": "ls"})
-        output = captured.getvalue()
-        assert "[sub]" in output
+    def test_tool_call_renderer_format(self):
+        from terminal.io import CaptureOutputWriter, DefaultToolCallRenderer
+        cap = CaptureOutputWriter()
+        renderer = DefaultToolCallRenderer(cap)
+        renderer.on_tool_call("bash", {"command": "ls"})
+        output = "\n".join(cap.lines)
         assert "bash" in output
-        assert "🔧" not in output  # 不使用主 Agent 图标
 
     def test_normalize_message_filters_extra_dict_fields(self):
         """dict 输入也必须收敛到统一的四字段契约。"""
@@ -225,11 +184,11 @@ class TestSubAgentConstruction:
         sub = SubAgent(mock_llm, mock_executor)
         assert sub.system_prompt == SUB_SYSTEM_PROMPT
 
-    def test_subagent_uses_sub_print_handler(self, mock_llm, mock_executor):
+    def test_subagent_uses_default_io_backend(self, mock_llm, mock_executor):
         from agent.agent import SubAgent
-        from agent.utils import sub_print_handler
+        from terminal.io import IOBackend
         sub = SubAgent(mock_llm, mock_executor)
-        assert sub.print_handler is sub_print_handler
+        assert isinstance(sub._io, IOBackend)
 
     def test_subagent_round_starts_at_zero(self, mock_llm, mock_executor):
         from agent.agent import SubAgent
@@ -438,18 +397,6 @@ class TestSpawnSubagent:
 class TestObservabilityFormat:
     """端到端验证 Sub-Agent 输出格式。"""
 
-    def test_sub_print_handler_has_correct_prefix(self):
-        """sub_print_handler 输出包含 [sub] 前缀且不含 🔧 图标。"""
-        from agent.utils import sub_print_handler
-        captured = StringIO()
-        with patch("sys.stdout", captured):
-            sub_print_handler("read_file", {"file_path": "/tmp/test.py"})
-        output = captured.getvalue()
-        assert "[sub]" in output
-        assert "🔧" not in output
-        assert "read_file" in output
-        assert "/tmp/test.py" in output
-
     def test_spawn_lifecycle_markers_present(self, mock_llm, mock_executor):
         """spawn_subagent 输出包含启动和完成标记。"""
         from tools.task import spawn_subagent
@@ -466,25 +413,6 @@ class TestObservabilityFormat:
             assert "查找所有 .py 文件" in output
         finally:
             Agent.run = original_run
-
-    def test_all_tool_types_have_extract_coverage(self):
-        """_extract_key_param 覆盖所有 Sub-Agent 可用工具类型。"""
-        from agent.utils import _extract_key_param
-        tool_args = [
-            ("bash", {"command": "ls"}),
-            ("read_file", {"file_path": "/tmp/test.py"}),
-            ("write_file", {"file_path": "/tmp/out.py"}),
-            ("edit_file", {"file_path": "/tmp/mod.py"}),
-            ("read_chunk", {"file_path": "/tmp/test.py"}),
-            ("web_search", {"query": "test query"}),
-            ("web_fetch", {"url": "https://example.com"}),
-            ("search_knowledge", {"query": "knowledge query"}),
-            ("calculator", {"expression": "1+1"}),
-            ("get_time", {}),
-        ]
-        for name, args in tool_args:
-            result = _extract_key_param(name, args)
-            assert isinstance(result, str), f"{name} should return str"
 
 
 # ═══════════════════════════════════════════════════════════════
